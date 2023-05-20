@@ -446,33 +446,22 @@ public class BPlusTree {
     // Iterator ////////////////////////////////////////////////////////////////
     private class BPlusTreeIterator implements Iterator<RecordId> {
         // TODO(proj2): Add whatever fields and constructors you want here.
+        private Iterator<RecordId> currentIterator;
         private LeafNode currentNode;
-        private int currentIteratedRecordsIndex;
-
-        private boolean isCurrentNodeHasSibling() {
-            return currentNode.getRightSibling().isPresent();
-        }
-
-        private boolean isCurrentNodeIterated() {
-            return currentIteratedRecordsIndex >= currentNode.getRids().size();
-        }
 
         public BPlusTreeIterator(BPlusNode root) {
             currentNode = root.getLeftmostLeaf();
-            currentIteratedRecordsIndex = 0;
+            currentIterator = currentNode.scanAll();
         }
 
         public BPlusTreeIterator(BPlusNode root, DataBox from) {
             currentNode = root.get(from);
-            int index = currentNode.getKeys().indexOf(from);
-            assert index != -1;
-            currentIteratedRecordsIndex = index;
+            currentIterator = currentNode.scanGreaterEqual(from);
         }
 
         @Override
         public boolean hasNext() {
-            // TODO(proj2): implement
-            return !isCurrentNodeIterated() || isCurrentNodeHasSibling();
+            return currentIterator.hasNext() || currentNode.getRightSibling().isPresent();
         }
 
         @Override
@@ -482,18 +471,15 @@ public class BPlusTree {
                 throw new NoSuchElementException();
             }
 
-            if (!isCurrentNodeIterated()) {
-                RecordId r = currentNode.getRids().get(currentIteratedRecordsIndex);
-                currentIteratedRecordsIndex += 1;
-                return r;
+            if (currentIterator.hasNext()) {
+                return currentIterator.next();
             }
 
-            // always exists.
-            assert currentNode.getRightSibling().isPresent();
 
-            // current node is drained, move to next node
+            // must exist.
+            assert currentNode.getRightSibling().isPresent();
             currentNode = currentNode.getRightSibling().get();
-            currentIteratedRecordsIndex = 0;
+            currentIterator = currentNode.scanAll();
             return next();
         }
     }
