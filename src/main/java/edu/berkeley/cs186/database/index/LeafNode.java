@@ -213,8 +213,47 @@ class LeafNode extends BPlusNode {
     public Optional<Pair<DataBox, Long>> bulkLoad(Iterator<Pair<DataBox, RecordId>> data,
                                                   float fillFactor) {
         // TODO(proj2): implement
+        int maxRecordSize = (int) Math.ceil(fillFactor * metadata.getOrder() * 2);
 
-        return Optional.empty();
+        for (
+            Iterator<Pair<DataBox, RecordId>> it = data;
+            // fill up to be 1 record more than fillFactor full
+            it.hasNext() && rids.size() <= maxRecordSize;
+        ) {
+            Pair<DataBox, RecordId> p = it.next();
+
+            if (keys.indexOf(p.getFirst()) >= 0) {
+                throw new BPlusTreeException("Not support to insert same key currently.");
+            }
+
+            keys.add(p.getFirst());
+            rids.add(p.getSecond());
+        }
+
+        // data is drained.
+        if (rids.size() < maxRecordSize) {
+            sync();
+            return Optional.empty();
+        }
+
+        List<DataBox> newKeys = new ArrayList<>();
+        List<RecordId> newRecords = new ArrayList<>();
+        newKeys.add(keys.remove(keys.size() - 1));
+        newRecords.add(rids.remove(rids.size() - 1));
+        LeafNode newNode = new LeafNode(
+                metadata,
+                bufferManager,
+                newKeys,
+                newRecords,
+                rightSibling,
+                treeContext
+        );
+        long newNodePage = newNode.getPage().getPageNum();
+        rightSibling = Optional.of(newNodePage);
+        Pair<DataBox, Long> splitPair = new Pair<DataBox, Long>(newKeys.get(0), newNodePage);
+        sync();
+
+        return Optional.of(splitPair);
     }
 
     // See BPlusNode.remove.
