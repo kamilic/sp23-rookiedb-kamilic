@@ -147,25 +147,65 @@ class LeafNode extends BPlusNode {
     // See BPlusNode.get.
     @Override
     public LeafNode get(DataBox key) {
-        // TODO(proj2): implement
-
-        return null;
+        return this;
     }
 
     // See BPlusNode.getLeftmostLeaf.
     @Override
     public LeafNode getLeftmostLeaf() {
-        // TODO(proj2): implement
-
-        return null;
+        return this;
     }
 
     // See BPlusNode.put.
     @Override
     public Optional<Pair<DataBox, Long>> put(DataBox key, RecordId rid) {
-        // TODO(proj2): implement
+        // Not support to insert same key currently.
+        if (keys.indexOf(key) >= 0) {
+            throw new BPlusTreeException("Not support to insert same key currently.");
+        }
 
-        return Optional.empty();
+        int d = metadata.getOrder();
+        int indexInsertTo = InnerNode.numLessThan(key, keys);
+
+        keys.add(indexInsertTo, key);
+        rids.add(indexInsertTo, rid);
+
+        if (keys.size() <= 2 * d) {
+            sync();
+            return Optional.empty();
+        }
+
+        // the first d entries are kept in the left node
+        List<DataBox> leftPartKeys = keys.subList(0, d);
+        List<RecordId> leftPartRecords = rids.subList(0, d);
+
+        // The middle entry is moved (not copied) up as the split key.
+        List<DataBox> splitKey = keys.subList(d, d + 1);
+        List<RecordId> splitRecord = rids.subList(d, d + 1);
+
+        // the last d entries to create new node.
+        List<DataBox> newKeys = keys.subList(d, keys.size());
+        List<RecordId> newRecords = rids.subList(d, rids.size());
+        LeafNode newNode = new LeafNode(
+                metadata,
+                bufferManager,
+                newKeys,
+                newRecords,
+                rightSibling,
+                treeContext
+        );
+
+        long newNodePage = newNode.page.getPageNum();
+
+        // update left part nodes to current node
+        keys = leftPartKeys;
+        rids = leftPartRecords;
+        rightSibling = Optional.of(newNodePage);
+        sync();
+
+        // tell upper node to insert key
+        Pair<DataBox, Long> splitPair = new Pair<DataBox, Long>(splitKey.get(0), newNodePage);
+        return Optional.of(splitPair);
     }
 
     // See BPlusNode.bulkLoad.
@@ -180,8 +220,10 @@ class LeafNode extends BPlusNode {
     // See BPlusNode.remove.
     @Override
     public void remove(DataBox key) {
-        // TODO(proj2): implement
-
+        int index = keys.indexOf(key);
+        keys.remove(index);
+        rids.remove(index);
+        sync();
         return;
     }
 
@@ -396,7 +438,7 @@ class LeafNode extends BPlusNode {
         assert (buf.get() == (byte) 1);
         // 3.2 right siblings
         long rs = buf.getLong();
-        Optional<Long> rightSibling = rs != -1L ? Optional.of(rs): Optional.empty();
+        Optional<Long> rightSibling = rs != -1L ? Optional.of(rs) : Optional.empty();
         // 3.3 the rids / keys size
         int pairSize = buf.getInt();
         // 3.4 rids / keys itself
