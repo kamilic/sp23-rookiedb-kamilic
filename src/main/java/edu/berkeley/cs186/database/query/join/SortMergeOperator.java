@@ -137,31 +137,27 @@ public class SortMergeOperator extends JoinOperator {
             return leftRecord.getValue(getLeftColumnIndex()).compareTo(rightRecord.getValue(getRightColumnIndex()));
         }
 
-        private void advanceLeftCoarse() {
-            // IF L < R, adv L Until L >= R
-            while (compareLeftRightValue() < 0) {
-                if (leftIterator.hasNext()) {
-                    leftRecord = leftIterator.next();
-                } else {
-                    return;
-                }
-            }
+        private boolean isRecordExists() {
+            return rightRecord != null && leftRecord != null;
+        }
+
+        private boolean isLGreaterThanR() {
+            return isRecordExists() && compareLeftRightValue() > 0;
+        }
+
+        private boolean isRGreaterThanL() {
+            return isRecordExists() && compareLeftRightValue() < 0;
+        }
+
+        private boolean isLREqual() {
+            return isRecordExists() && compareLeftRightValue() == 0;
         }
 
         private void advanceLeft() {
             if (leftIterator.hasNext()) {
                 leftRecord = leftIterator.next();
-            }
-        }
-
-        private void advanceRightCoarse() {
-            // IF L > R, adv R Until L <= R
-            while (compareLeftRightValue() > 0) {
-                if (rightIterator.hasNext()) {
-                    rightRecord = rightIterator.next();
-                } else {
-                    return;
-                }
+            } else {
+                leftRecord = null;
             }
         }
 
@@ -169,8 +165,7 @@ public class SortMergeOperator extends JoinOperator {
             if (rightIterator.hasNext()) {
                 rightRecord = rightIterator.next();
             } else {
-                rightIterator.reset();
-                marked = false;
+                rightRecord = null;
             }
         }
 
@@ -180,24 +175,32 @@ public class SortMergeOperator extends JoinOperator {
          */
         private Record fetchNextRecord() {
             // TODO(proj3_part1): implement
+            do {
+                if (!marked) {
+                    // IF L < R, adv L Until L >= R
+                    while (isRGreaterThanL()) advanceLeft();
+                    // IF L > R, adv R Until L <= R
+                    while (isLGreaterThanR()) advanceRight();
+                    marked = true;
+                    rightIterator.markPrev();
+                }
 
-            if (!marked) {
-                advanceLeftCoarse();
-                advanceRightCoarse();
-                marked = true;
-                rightIterator.markNext();
+                if (isLREqual()) {
+                    Record joinedRecord = leftRecord.concat(rightRecord);
+                    advanceRight();
+                    return joinedRecord;
+                } else {
+                    // if leftIterator is drained, we can't reset `rightIterator`.
+                    // it will break the loop
+                    if (leftIterator.hasNext()) {
+                        rightIterator.reset();
+                        advanceRight();
+                    }
+                    advanceLeft();
+                    marked = false;
+                }
             }
-
-            if (compareLeftRightValue() == 0) {
-                Record joinRecord = leftRecord.concat(rightRecord);
-                advanceRight();
-                return joinRecord;
-            } else {
-                marked = false;
-                advanceLeft();
-                advanceRight();
-            }
-
+            while (isRecordExists());
 
             return null;
         }
