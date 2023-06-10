@@ -237,14 +237,14 @@ public class TestLockManager {
 
     @Test
     @Category(PublicTests.class)
-    public void testAcquireReleaseQueue() {
+    public void testAcquireReleaseQueue() throws InterruptedException {
         /**
          * Transaction 0 acquires an X lock on table0
          * Transaction 1 acquires an X lock on table1
          * Transaction 0 attempts to acquire an X lock on table1 and
          *     release its X lock on table0
          */
-        DeterministicRunner runner = new DeterministicRunner(2);
+        DeterministicRunner runner = new DeterministicRunner(3);
         runner.run(0, () -> lockman.acquireAndRelease(transactions[0], tables[0], LockType.X,
                    Collections.emptyList()));
         runner.run(1, () -> lockman.acquireAndRelease(transactions[1], tables[1], LockType.X,
@@ -270,6 +270,18 @@ public class TestLockManager {
         assertTrue(transactions[0].getBlocked());
 
         runner.join(1);
+
+        // Additional test for "Release" part on table[0]
+
+        // release T1 X lock
+        runner.run(2, () -> lockman.release(transactions[1], tables[1]));
+        runner.join(2);
+
+        // T0 will be released because no lock on table1 now
+        assertFalse(transactions[0].getBlocked());
+
+        // And the "Release" part of `acquireAndRelease()` on table[0] should take effects.
+        assertEquals(LockType.NL, lockman.getLockType(transactions[0], tables[0]));
     }
 
     @Test
