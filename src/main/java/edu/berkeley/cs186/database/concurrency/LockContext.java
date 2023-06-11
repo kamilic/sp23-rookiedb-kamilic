@@ -1,6 +1,7 @@
 package edu.berkeley.cs186.database.concurrency;
 
 import edu.berkeley.cs186.database.TransactionContext;
+import edu.berkeley.cs186.database.databox.Type;
 
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -84,31 +85,46 @@ public class LockContext {
 
     /**
      * Acquire a `lockType` lock, for transaction `transaction`.
-     *
+     * <p>
      * Note: you must make any necessary updates to numChildLocks, or else calls
      * to LockContext#getNumChildren will not work properly.
      *
-     * @throws InvalidLockException if the request is invalid
+     * @throws InvalidLockException          if the request is invalid
      * @throws DuplicateLockRequestException if a lock is already held by the
-     * transaction.
+     *                                       transaction.
      * @throws UnsupportedOperationException if context is readonly
      */
     public void acquire(TransactionContext transaction, LockType lockType)
             throws InvalidLockException, DuplicateLockRequestException {
+        if (this.readonly) {
+            throw new UnsupportedOperationException("Current resource is readonly");
+        }
         // TODO(proj4_part2): implement
+        ResourceName resourceName = getResourceName();
+        boolean isLockTypeIsISOrS = lockType.equals(LockType.S) || lockType.equals(LockType.IS);
 
-        return;
+        if (hasSIXAncestor(transaction) && isLockTypeIsISOrS) {
+            throw new InvalidLockException("Lock is valid.");
+        }
+
+        lockman.acquire(transaction, resourceName, lockType);
+        numChildLocks.put(transaction.getTransNum(), this.getNumChildren(transaction) + 1);
+
+//        if (parent != null) {
+//            LockType parentType = resolveParentLockType(lockType);
+//            parent.acquire(transaction, parentType);
+//        }
     }
 
     /**
      * Release `transaction`'s lock on `name`.
-     *
+     * <p>
      * Note: you *must* make any necessary updates to numChildLocks, or
      * else calls to LockContext#getNumChildren will not work properly.
      *
-     * @throws NoLockHeldException if no lock on `name` is held by `transaction`
-     * @throws InvalidLockException if the lock cannot be released because
-     * doing so would violate multigranularity locking constraints
+     * @throws NoLockHeldException           if no lock on `name` is held by `transaction`
+     * @throws InvalidLockException          if the lock cannot be released because
+     *                                       doing so would violate multigranularity locking constraints
      * @throws UnsupportedOperationException if context is readonly
      */
     public void release(TransactionContext transaction)
@@ -122,19 +138,19 @@ public class LockContext {
      * Promote `transaction`'s lock to `newLockType`. For promotion to SIX from
      * IS/IX, all S and IS locks on descendants must be simultaneously
      * released. The helper function sisDescendants may be helpful here.
-     *
+     * <p>
      * Note: you *must* make any necessary updates to numChildLocks, or else
      * calls to LockContext#getNumChildren will not work properly.
      *
      * @throws DuplicateLockRequestException if `transaction` already has a
-     * `newLockType` lock
-     * @throws NoLockHeldException if `transaction` has no lock
-     * @throws InvalidLockException if the requested lock type is not a
-     * promotion or promoting would cause the lock manager to enter an invalid
-     * state (e.g. IS(parent), X(child)). A promotion from lock type A to lock
-     * type B is valid if B is substitutable for A and B is not equal to A, or
-     * if B is SIX and A is IS/IX/S, and invalid otherwise. hasSIXAncestor may
-     * be helpful here.
+     *                                       `newLockType` lock
+     * @throws NoLockHeldException           if `transaction` has no lock
+     * @throws InvalidLockException          if the requested lock type is not a
+     *                                       promotion or promoting would cause the lock manager to enter an invalid
+     *                                       state (e.g. IS(parent), X(child)). A promotion from lock type A to lock
+     *                                       type B is valid if B is substitutable for A and B is not equal to A, or
+     *                                       if B is SIX and A is IS/IX/S, and invalid otherwise. hasSIXAncestor may
+     *                                       be helpful here.
      * @throws UnsupportedOperationException if context is readonly
      */
     public void promote(TransactionContext transaction, LockType newLockType)
@@ -151,30 +167,30 @@ public class LockContext {
      * before this call must still be valid. You should only make *one* mutating
      * call to the lock manager, and should only request information about
      * TRANSACTION from the lock manager.
-     *
+     * <p>
      * For example, if a transaction has the following locks:
-     *
-     *                    IX(database)
-     *                    /         \
-     *               IX(table1)    S(table2)
-     *                /      \
-     *    S(table1 page3)  X(table1 page5)
-     *
+     * <p>
+     * IX(database)
+     * /         \
+     * IX(table1)    S(table2)
+     * /      \
+     * S(table1 page3)  X(table1 page5)
+     * <p>
      * then after table1Context.escalate(transaction) is called, we should have:
-     *
-     *                    IX(database)
-     *                    /         \
-     *               X(table1)     S(table2)
-     *
+     * <p>
+     * IX(database)
+     * /         \
+     * X(table1)     S(table2)
+     * <p>
      * You should not make any mutating calls if the locks held by the
      * transaction do not change (such as when you call escalate multiple times
      * in a row).
-     *
+     * <p>
      * Note: you *must* make any necessary updates to numChildLocks of all
      * relevant contexts, or else calls to LockContext#getNumChildren will not
      * work properly.
      *
-     * @throws NoLockHeldException if `transaction` has no lock at this level
+     * @throws NoLockHeldException           if `transaction` has no lock at this level
      * @throws UnsupportedOperationException if context is readonly
      */
     public void escalate(TransactionContext transaction) throws NoLockHeldException {
@@ -190,7 +206,7 @@ public class LockContext {
     public LockType getExplicitLockType(TransactionContext transaction) {
         if (transaction == null) return LockType.NL;
         // TODO(proj4_part2): implement
-        return LockType.NL;
+        return lockman.getLockType(transaction, getResourceName());
     }
 
     /**
@@ -201,13 +217,39 @@ public class LockContext {
      */
     public LockType getEffectiveLockType(TransactionContext transaction) {
         if (transaction == null) return LockType.NL;
+        LockContext currentContext = this;
+
+        do {
+            LockType type = currentContext.getExplicitLockType(transaction);
+            if (!type.equals(LockType.NL)) {
+                return type;
+            }
+            currentContext = currentContext.parent;
+        }
+        while (currentContext != null);
+
         // TODO(proj4_part2): implement
         return LockType.NL;
     }
 
+//    private LockType resolveParentLockType(LockType aqLock) {
+//        boolean isLockTypeIsISOrS = aqLock.equals(LockType.S) || aqLock.equals(LockType.IS);
+//        boolean isLockTypeIsIXOrX = aqLock.equals(LockType.X) || aqLock.equals(LockType.IX);
+//
+//        if (isLockTypeIsISOrS) {
+//            return LockType.IS;
+//        } else if (isLockTypeIsIXOrX) {
+//            return LockType.IX;
+//        } else {
+//            // NL / SIX
+//            return aqLock;
+//        }
+//    }
+
     /**
      * Helper method to see if the transaction holds a SIX lock at an ancestor
      * of this context
+     *
      * @param transaction the transaction
      * @return true if holds a SIX at an ancestor, false if not
      */
@@ -219,6 +261,7 @@ public class LockContext {
     /**
      * Helper method to get a list of resourceNames of all locks that are S or
      * IS and are descendants of current context for the given transaction.
+     *
      * @param transaction the given transaction
      * @return a list of ResourceNames of descendants which the transaction
      * holds an S or IS lock.
