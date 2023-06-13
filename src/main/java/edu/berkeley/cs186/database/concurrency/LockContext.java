@@ -102,18 +102,20 @@ public class LockContext {
         // TODO(proj4_part2): implement
         ResourceName resourceName = getResourceName();
         boolean isLockTypeIsISOrS = lockType.equals(LockType.S) || lockType.equals(LockType.IS);
+        boolean isParentLockInvalid = parent != null && !LockType.compatible(lockType, parent.getExplicitLockType(transaction));
+
+        if (isParentLockInvalid) {
+            throw new InvalidLockException("Attempting to acquire an " +
+                    lockType + "lock with an " + parent.getExplicitLockType(transaction) + " lock");
+        }
+
 
         if (hasSIXAncestor(transaction) && isLockTypeIsISOrS) {
-            throw new InvalidLockException("Lock is valid.");
+            throw new InvalidLockException("Lock is invalid.");
         }
 
         lockman.acquire(transaction, resourceName, lockType);
         numChildLocks.put(transaction.getTransNum(), this.getNumChildren(transaction) + 1);
-
-//        if (parent != null) {
-//            LockType parentType = resolveParentLockType(lockType);
-//            parent.acquire(transaction, parentType);
-//        }
     }
 
     /**
@@ -218,33 +220,20 @@ public class LockContext {
     public LockType getEffectiveLockType(TransactionContext transaction) {
         if (transaction == null) return LockType.NL;
         LockContext currentContext = this;
-
+        LockType result = LockType.NL;
         do {
             LockType type = currentContext.getExplicitLockType(transaction);
-            if (!type.equals(LockType.NL)) {
-                return type;
+            if (!type.equals(LockType.NL) && !type.isIntent()) {
+                result = type;
+                break;
             }
             currentContext = currentContext.parent;
         }
         while (currentContext != null);
 
         // TODO(proj4_part2): implement
-        return LockType.NL;
+        return result;
     }
-
-//    private LockType resolveParentLockType(LockType aqLock) {
-//        boolean isLockTypeIsISOrS = aqLock.equals(LockType.S) || aqLock.equals(LockType.IS);
-//        boolean isLockTypeIsIXOrX = aqLock.equals(LockType.X) || aqLock.equals(LockType.IX);
-//
-//        if (isLockTypeIsISOrS) {
-//            return LockType.IS;
-//        } else if (isLockTypeIsIXOrX) {
-//            return LockType.IX;
-//        } else {
-//            // NL / SIX
-//            return aqLock;
-//        }
-//    }
 
     /**
      * Helper method to see if the transaction holds a SIX lock at an ancestor
@@ -255,7 +244,7 @@ public class LockContext {
      */
     private boolean hasSIXAncestor(TransactionContext transaction) {
         // TODO(proj4_part2): implement
-        return false;
+        return this.getEffectiveLockType(transaction).equals(LockType.SIX);
     }
 
     /**
