@@ -163,7 +163,9 @@ public class LockContext {
         }
 
         lockman.release(transaction, resourceName);
-        numChildLocks.put(transaction.getTransNum(), this.getNumChildren(transaction) - 1);
+        if (parent != null) {
+            parent.numChildLocks.put(transaction.getTransNum(), this.getNumChildren(transaction) - 1);
+        }
     }
 
     /**
