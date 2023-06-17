@@ -3,6 +3,7 @@ package edu.berkeley.cs186.database.concurrency;
 import edu.berkeley.cs186.database.TransactionContext;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * LockManager maintains the bookkeeping for what transactions have what locks
@@ -242,8 +243,6 @@ public class LockManager {
             long transNum = transaction.getTransNum();
             LockType transactionLockType = res.getTransactionLockType(transNum);
 
-            // Why throw error?
-            // Each transaction can only hold one resource lock based on 2PL.
             if (transactionLockType.equals(lockType)) {
                 throw new DuplicateLockRequestException("Lock on resource " + name.toString() + " is held by transaction " + transaction.toString());
             }
@@ -255,11 +254,18 @@ public class LockManager {
             transaction.block();
         }
 
+        List<ResourceName> realReleaseNames = releaseNames
+                .stream()
+                .filter(l -> !l.equals(name))
+                .collect(Collectors.toList());
+
         synchronized (this) {
-            for (ResourceName rn : releaseNames) {
+            for (ResourceName rn : realReleaseNames) {
                 release(transaction, rn);
             }
         }
+
+
     }
 
     private synchronized boolean acquireInternal(
