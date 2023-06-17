@@ -101,14 +101,15 @@ public class LockContext {
         checkReadOnlyOrThrow();
         // TODO(proj4_part2): implement
         ResourceName resourceName = getResourceName();
-        boolean isLockTypeIsISOrS = lockType.equals(LockType.S) || lockType.equals(LockType.IS);
-        boolean isParentLockInvalid = parent != null && !LockType.compatible(lockType, parent.getExplicitLockType(transaction));
+        LockType parentLockType = parent != null ? parent.getExplicitLockType(transaction) : null;
+        boolean isParentLockInvalid = parentLockType != null && !LockType.canBeParentLock(parentLockType, lockType);
 
         if (isParentLockInvalid) {
             throw new InvalidLockException("Attempting to acquire an " +
-                    lockType + "lock with an " + parent.getExplicitLockType(transaction) + " lock");
+                    lockType + " lock with an " + parentLockType + " parent lock");
         }
 
+        boolean isLockTypeIsISOrS = lockType.equals(LockType.S) || lockType.equals(LockType.IS);
         if (hasSIXAncestor(transaction) && isLockTypeIsISOrS) {
             throw new InvalidLockException("Lock is invalid.");
         }
@@ -239,8 +240,42 @@ public class LockContext {
      */
     public void escalate(TransactionContext transaction) throws NoLockHeldException {
         // TODO(proj4_part2): implement
+        checkReadOnlyOrThrow();
+        LockType currentLockType = lockman.getLockType(transaction, getResourceName());
 
-        return;
+        if (currentLockType.equals(LockType.NL)) {
+            throw new NoLockHeldException("No lock held at this transaction");
+        }
+
+        // find out all descendant of this context
+        List<Lock> descendantLocks = descendantLocks(transaction);
+        // calculate out the escalate lock type
+        LockType targetLockType = descendantLocks
+                .stream()
+                .map(l -> l.lockType)
+                .reduce(LockType.escalatedLock(currentLockType), (res, l) -> {
+                    LockType escalatedLock = LockType.escalatedLock(l);
+                    if (res.equals(LockType.X) || escalatedLock.equals(LockType.X)) {
+                        return LockType.X;
+                    }
+
+                    if (res.equals(LockType.S) || escalatedLock.equals(LockType.S)) {
+                        return LockType.S;
+                    }
+
+                    return res;
+                });
+
+        if (!currentLockType.equals(targetLockType)) {
+            // acquire new escalate lock type
+            acquire(transaction, targetLockType);
+        }
+
+        // release all descendant locks
+        for (Lock l : descendantLocks) {
+            LockContext lockContext = LockContext.fromResourceName(lockman, l.name);
+            lockContext.release(transaction);
+        }
     }
 
     /**
