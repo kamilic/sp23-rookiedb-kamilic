@@ -89,7 +89,7 @@ public class LockManager {
         }
 
 
-        boolean isAllLocksReleased(List<Lock> releaseLock) {
+        boolean isAllConflictedLocksReleased(List<Lock> releaseLock) {
             for (Lock rl : releaseLock) {
                 if (locks.contains(rl)) {
                     return false;
@@ -109,21 +109,22 @@ public class LockManager {
          * lock.
          */
         public void grantOrUpdateLock(Lock lock) {
-            boolean updated = false;
+            Lock lockBeforeUpdated = null;
             for (int i = 0; i < locks.size(); i += 1) {
                 Lock l = locks.get(i);
                 if (Objects.equals(lock.transactionNum, l.transactionNum)) {
                     locks.set(i, lock);
-                    updated = true;
+                    lockBeforeUpdated = l;
                 }
             }
 
-            if (!updated) {
-                locks.add(lock);
-            }
-
             transactionLocks.putIfAbsent(lock.transactionNum, new ArrayList<>());
-            transactionLocks.get(lock.transactionNum).removeIf(l -> l.equals(lock));
+            if (lockBeforeUpdated == null) {
+                locks.add(lock);
+            } else {
+                final Lock finalLockBeforeUpdated = lockBeforeUpdated;
+                transactionLocks.get(lock.transactionNum).removeIf(l -> l.equals(finalLockBeforeUpdated));
+            }
             transactionLocks.get(lock.transactionNum).add(lock);
         }
 
@@ -172,7 +173,8 @@ public class LockManager {
             }
 
             LockRequest req = requests.next();
-            if (this.isAllLocksReleased(req.releasedLocks)) {
+            waitingQueue.remove(req);
+            if (this.isAllConflictedLocksReleased(req.releasedLocks)) {
                 grantOrUpdateLock(req.lock);
                 req.transaction.unblock();
             } else {
@@ -198,6 +200,11 @@ public class LockManager {
         public String toString() {
             return "Active Locks: " + Arrays.toString(this.locks.toArray()) +
                     ", Queue: " + Arrays.toString(this.waitingQueue.toArray());
+        }
+
+
+        public boolean isQueueEmpty() {
+            return waitingQueue.size() == 0;
         }
     }
 
@@ -289,17 +296,23 @@ public class LockManager {
         boolean isCompatible = res.checkCompatible(lockType, transNum);
         Lock lock = new Lock(name, lockType, transNum);
 
-        if (!isCompatible) {
+        /*
+         * Why queue must be empty?
+         * This is the 2PL rules, must hold all lock on acquisition phase.
+         * If queue is not an empty queue means that there are conflict ops
+         * (`res.checkCompatible == false` must have been happened) on this resource.
+         * Transaction must wait until the conflict is resolved.
+         * This is expected situation of `I(isolation)` rule in ACID.
+         */
+        if (res.isQueueEmpty() && res.checkCompatible(lockType, transNum)) {
+            res.grantOrUpdateLock(lock);
+            return false;
+        } else {
             LockRequest lq = new LockRequest(transaction, lock, res.getNotCompatibleLocks(lockType, transNum));
             res.addToQueue(lq, addFront);
             transaction.prepareBlock();
             return true;
-        } else {
-            res.grantOrUpdateLock(lock);
-
         }
-
-        return false;
     }
 
     /**
