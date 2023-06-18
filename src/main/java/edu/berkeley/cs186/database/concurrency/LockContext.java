@@ -1,9 +1,7 @@
 package edu.berkeley.cs186.database.concurrency;
 
 import edu.berkeley.cs186.database.TransactionContext;
-import edu.berkeley.cs186.database.databox.Type;
 
-import javax.naming.Context;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;

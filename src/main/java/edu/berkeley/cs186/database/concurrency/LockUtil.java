@@ -62,8 +62,6 @@ public class LockUtil {
         if (explicitLockType.equals(LockType.IS) && requestType.equals(LockType.S)) {
             lockContext.escalate(transaction);
         }
-        // TODO(proj4_part2): implement
-        return;
     }
 
     static public void ensureParentContext(LockContext parentContext, LockType childLock) {
