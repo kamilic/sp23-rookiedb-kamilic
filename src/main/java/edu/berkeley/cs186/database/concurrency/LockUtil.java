@@ -42,6 +42,10 @@ public class LockUtil {
         LockContext parentContext = lockContext.parentContext();
         LockType effectiveLockType = lockContext.getEffectiveLockType(transaction);
         LockType explicitLockType = lockContext.getExplicitLockType(transaction);
+        boolean canBeParentLock = LockType.canBeParentLock(
+                parentContext.getExplicitLockType(transaction),
+                requestType
+        );
 
         // same lock type should return immediately
         if (requestType.equals(explicitLockType)) {
@@ -51,17 +55,17 @@ public class LockUtil {
         // The current lock type can effectively substitute the requested type
         if (requestType.equals(LockType.NL)) {
             lockContext.release(transaction);
-            return;
-        }
-
-        if (explicitLockType.equals(LockType.NL) && effectiveLockType.equals(LockType.NL)) {
-            LockUtil.ensureParentContext(lockContext.parent, requestType);
+        } else if (explicitLockType.equals(LockType.IS) && requestType.equals(LockType.S)) {
+            lockContext.escalate(transaction);
+        } else if (explicitLockType.equals(LockType.IX) && requestType.equals(LockType.S)) {
+            lockContext.promote(transaction, LockType.SIX);
+        } else if (LockType.compatible(effectiveLockType, requestType)) {
+            if (!canBeParentLock) {
+                LockUtil.ensureParentContext(lockContext.parent, requestType);
+            }
             lockContext.acquire(transaction, requestType);
         }
 
-        if (explicitLockType.equals(LockType.IS) && requestType.equals(LockType.S)) {
-            lockContext.escalate(transaction);
-        }
     }
 
     static public void ensureParentContext(LockContext parentContext, LockType childLock) {
