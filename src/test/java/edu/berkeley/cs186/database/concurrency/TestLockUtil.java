@@ -249,8 +249,6 @@ public class TestLockUtil {
                 "acquire 0 database/table1/3 X"
         ).toString(), lockManager.log.toString());
 
-        System.out.println(lockManager.log);
-
         lockManager.clearLog();
 
         /**

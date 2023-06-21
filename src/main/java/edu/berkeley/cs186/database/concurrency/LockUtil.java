@@ -59,17 +59,22 @@ public class LockUtil {
             lockContext.escalate(transaction);
         } else if (explicitLockType.equals(LockType.IX) && requestType.equals(LockType.S)) {
             lockContext.promote(transaction, LockType.SIX);
-        } else if (LockType.compatible(effectiveLockType, requestType)) {
+        } else {
             if (!canBeParentLock) {
                 LockUtil.ensureParentContext(lockContext.parent, requestType);
             }
-            lockContext.acquire(transaction, requestType);
-        }
 
+            if (LockType.compatible(effectiveLockType, requestType)) {
+                lockContext.acquire(transaction, requestType);
+            } else {
+                lockContext.promote(transaction, requestType);
+            }
+        }
     }
 
     static public void ensureParentContext(LockContext parentContext, LockType childLock) {
         LockContext currentLockContext = parentContext;
+        TransactionContext transaction = TransactionContext.getTransaction();
         Stack<LockContext> allParentContexts = new Stack<>();
         LockType parentLock = LockType.parentLock(childLock);
 
@@ -80,7 +85,12 @@ public class LockUtil {
 
         while (!allParentContexts.empty()) {
             currentLockContext = allParentContexts.pop();
-            currentLockContext.acquire(TransactionContext.getTransaction(), parentLock);
+
+            if (currentLockContext.getExplicitLockType(transaction).equals(LockType.NL)) {
+                currentLockContext.acquire(transaction, parentLock);
+            } else {
+                currentLockContext.promote(transaction, parentLock);
+            }
         }
     }
 
