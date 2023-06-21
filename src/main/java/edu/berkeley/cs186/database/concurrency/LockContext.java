@@ -140,10 +140,9 @@ public class LockContext {
         for (Lock l : allChildLocks) {
             if (LockType.canBeParentLock(currentLockType, l.lockType)) {
                 throw new InvalidLockException("Attempting to release an " +
-                        currentLockType + "lock containing an " + l.lockType + " lock on its children");
+                        currentLockType + " lock containing an " + l.lockType + " lock on its children");
             }
         }
-
 
         lockman.release(transaction, resourceName);
         if (parent != null) {
