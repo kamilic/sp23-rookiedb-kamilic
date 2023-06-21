@@ -75,29 +75,47 @@ public class LockUtil {
         }
     }
 
+    /**
+     * @param releaseAction `true` will give a bottom-up order
+     *                      `false` will give a top-down order for lock acquire/promote
+     */
+    static public List<LockContext> getOrderedContext(List<LockContext> contexts, boolean releaseAction) {
+        contexts.sort(new Comparator<LockContext>() {
+            @Override
+            public int compare(LockContext o1, LockContext o2) {
+                int size1 = o1.name.getNames().size();
+                int size2 = o2.name.getNames().size();
+                return releaseAction ? size2 - size1 : size1 - size2;
+            }
+        });
+
+        return contexts;
+    }
+
     static public void ensureParentContext(LockContext parentContext, LockType childLock) {
-        LockContext currentLockContext = parentContext;
         TransactionContext transaction = TransactionContext.getTransaction();
-        Stack<LockContext> allParentContexts = new Stack<>();
+        List<LockContext> allParentContexts = new ArrayList<>();
         LockType parentLock = LockType.parentLock(childLock);
 
+        LockContext currentLockContext = parentContext;
         while (currentLockContext != null) {
-            allParentContexts.push(currentLockContext);
+            allParentContexts.add(currentLockContext);
             currentLockContext = currentLockContext.parent;
         }
 
-        while (!allParentContexts.empty()) {
-            currentLockContext = allParentContexts.pop();
-            LockType type = currentLockContext.getExplicitLockType(transaction);
+        List<LockContext> sortedParentContexts = LockUtil.getOrderedContext(allParentContexts, false);
+
+        for (LockContext ctx: sortedParentContexts) {
+            LockType type = ctx.getExplicitLockType(transaction);
 
             if (type.equals(parentLock)) {
                 continue;
             }
 
             if (type.equals(LockType.NL)) {
-                currentLockContext.acquire(transaction, parentLock);
+                ctx.acquire(transaction, parentLock);
             } else if (LockType.substitutable(parentLock, type)) {
-                currentLockContext.promote(transaction, parentLock);
+                ctx.promote(transaction, parentLock);
             }
         }
     }
