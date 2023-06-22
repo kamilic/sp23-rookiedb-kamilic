@@ -44,13 +44,11 @@ public class LockUtil {
         LockType explicitLockType = lockContext.getExplicitLockType(transaction);
 
         // same lock type should return immediately
-        if (requestType.equals(explicitLockType)) {
-            return;
-        }
-
-        if (effectiveLockType.equals(requestType)) {
+        if (requestType.equals(explicitLockType) || requestType.equals(effectiveLockType)) {
             // IX -> X -> NL(request X)
             // IS -> S -> NL(request S)
+            // IX -> IX -> X(request X)
+            // IS -> IS -> S(request S)
             // do nothing
             return;
         }
@@ -81,7 +79,7 @@ public class LockUtil {
                 }
             }
         } else {
-            // explicitLock: NL / X / S
+            // effectiveLockType: NL / X / S
             // request: X / S
             // request != explicitLock
             // potential pairs:
@@ -90,7 +88,7 @@ public class LockUtil {
             // 3. X -> S
             // 4. S -> X
             boolean canBeParentLock = parentContext == null || LockType.canBeParentLock(
-                    parentContext.getExplicitLockType(transaction),
+                    parentContext.getEffectiveLockType(transaction),
                     requestType
             );
 
@@ -98,12 +96,21 @@ public class LockUtil {
                 LockUtil.ensureParentContext(lockContext.parent, requestType);
             }
 
+            // Why use effectiveLockType?
+            // If we use explicitLock, these cases will break the multi-granularity policy.
+            // IS -> S -> NL(request X)
+            //      ==> LockType.compatible(X, NL) = true ==> will run lockContext.acquire(transaction, X)
+            //      and throws error, because we can't request X lock with S/IS parents.
+            // IX -> X -> NL(request S)
+            //      ==> LockType.compatible(S, NL) = true ==> will run lockContext.acquire(transaction, S)
+            //      and throws error, because we can't request S lock with X/IXSS parents.
+
             // pair 1 / 2
-            if (LockType.compatible(requestType, explicitLockType)) {
+            if (LockType.compatible(requestType, effectiveLockType)) {
                 lockContext.acquire(transaction, requestType);
             }
             // 4
-            else if (LockType.substitutable(requestType, explicitLockType)) {
+            else if (LockType.substitutable(requestType, effectiveLockType)) {
                 lockContext.promote(transaction, requestType);
             }
             // 3
