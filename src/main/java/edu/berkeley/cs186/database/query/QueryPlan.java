@@ -94,6 +94,8 @@ public class QueryPlan {
     }
 
     public QueryOperator getFinalOperator() {
+        addGroupBy();
+        addProject();
         return this.finalOperator;
     }
 
@@ -762,19 +764,17 @@ public class QueryPlan {
         // the lowest cost joins with each table from pass 1. Repeat until all
         // tables have been joined.
         Map<Set<String>, QueryOperator> passn = Map.copyOf(pass1);
-        do {
+        while (passn.keySet().stream().noneMatch(keys -> keys.containsAll(tableNames))) {
             passn = minCostJoins(passn, pass1);
         }
-        while (passn.keySet().stream().noneMatch(keys -> keys.containsAll(tableNames)));
 
         // Set the final operator to the lowest cost operator from the last
         // pass, add group by, project, sort and limit operators, and return an
         // iterator over the final operator.
         this.finalOperator = minCostOperator(passn);
         return getFinalOperator().iterator();
-
-//      return this.executeNaive(); // TODO(proj3_part2): Replace this!
     }
+
 
     // EXECUTE NAIVE ///////////////////////////////////////////////////////////
     // The following functions are used to generate a naive query plan. You're
