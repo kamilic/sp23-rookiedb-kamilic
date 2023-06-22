@@ -172,7 +172,8 @@ public class TestLockUtil {
          * IX on database and IX on table1 as well.
          */
         lockManager.startLog();
-        LockUtil.ensureSufficientLockHeld(pageContexts[3], LockType.X);;
+        LockUtil.ensureSufficientLockHeld(pageContexts[3], LockType.X);
+        ;
         assertEquals(Arrays.asList(
                 "acquire 0 database IX",
                 "acquire 0 database/table1 IX",

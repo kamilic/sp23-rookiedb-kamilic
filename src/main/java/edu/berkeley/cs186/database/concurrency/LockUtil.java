@@ -43,11 +43,6 @@ public class LockUtil {
         LockType effectiveLockType = lockContext.getEffectiveLockType(transaction);
         LockType explicitLockType = lockContext.getExplicitLockType(transaction);
 
-        boolean canBeParentLock = parentContext == null || LockType.canBeParentLock(
-                parentContext.getExplicitLockType(transaction),
-                requestType
-        );
-
         // same lock type should return immediately
         if (requestType.equals(explicitLockType)) {
             return;
@@ -56,22 +51,58 @@ public class LockUtil {
         // The current lock type can effectively substitute the requested type
         if (requestType.equals(LockType.NL)) {
             lockContext.release(transaction);
-        } else if (explicitLockType.equals(LockType.IS) && requestType.equals(LockType.S)) {
-            lockContext.escalate(transaction);
-        } else if (explicitLockType.equals(LockType.IX) && requestType.equals(LockType.S)) {
-            lockContext.promote(transaction, LockType.SIX);
+        } else if (explicitLockType.isIntent()) {
+            if (requestType.equals(LockType.S)) {
+                if (explicitLockType.equals(LockType.IS)) {
+                    lockContext.escalate(transaction);
+                } else if (explicitLockType.equals(LockType.IX)) {
+                    lockContext.promote(transaction, LockType.SIX);
+                }
+            } else {
+                if (explicitLockType.equals(LockType.IS)) {
+                    // IS -> IS(request X) -> S
+                    // step 1: IX -> IS -> S, make parent to IX
+                    LockUtil.ensureParentContext(lockContext.parent, requestType);
+                    // step 2: IX -> S(request X), escalate children
+                    lockContext.escalate(transaction);
+                    // step 3: IX -> S(request X), promote current S to X
+                    lockContext.promote(transaction, requestType);
+                } else if (explicitLockType.equals(LockType.IX) || explicitLockType.equals(LockType.SIX)) {
+                    // explicitLockType => SIX or IX
+                    // requestType => X
+                    lockContext.escalate(transaction);
+                }
+            }
         } else {
+            // explicitLock: NL / X / S
+            // request: X / S
+            // request != explicitLock
+            // potential pairs:
+            // 1. NL -> X
+            // 2. NL -> S
+            // 3. X -> S
+            // 4. S -> X
+            boolean canBeParentLock = parentContext == null || LockType.canBeParentLock(
+                    parentContext.getExplicitLockType(transaction),
+                    requestType
+            );
+
             if (!canBeParentLock) {
                 LockUtil.ensureParentContext(lockContext.parent, requestType);
             }
 
+            // pair 1 / 2
             if (LockType.compatible(requestType, explicitLockType)) {
                 lockContext.acquire(transaction, requestType);
-            } else if (LockType.substitutable(requestType, explicitLockType)) {
-                lockContext.promote(transaction, requestType);
-            } else {
-                lockContext.acquire(transaction, requestType);
             }
+            // 4
+            else if (LockType.substitutable(requestType, explicitLockType)) {
+                lockContext.promote(transaction, requestType);
+            }
+            // 3
+            // IX -> X(request S) -> NL
+            // step 1 (canBeParentLock = true)
+            // step 2 (In the same transaction, type X is a strict type S, they are the same lock, so we don't need to do any ops.)
         }
     }
 
@@ -105,7 +136,7 @@ public class LockUtil {
 
         List<LockContext> sortedParentContexts = LockUtil.getOrderedContext(allParentContexts, false);
 
-        for (LockContext ctx: sortedParentContexts) {
+        for (LockContext ctx : sortedParentContexts) {
             LockType type = ctx.getExplicitLockType(transaction);
 
             if (type.equals(parentLock)) {
