@@ -1,8 +1,10 @@
 package edu.berkeley.cs186.database.concurrency;
 
+import edu.berkeley.cs186.database.Transaction;
 import edu.berkeley.cs186.database.TransactionContext;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * LockUtil is a declarative layer which simplifies multigranularity lock
@@ -53,6 +55,10 @@ public class LockUtil {
             return;
         }
 
+        if (lockContext.readonly) {
+            return;
+        }
+
         // The current lock type can effectively substitute the requested type
         if (requestType.equals(LockType.NL)) {
             lockContext.release(transaction);
@@ -78,6 +84,19 @@ public class LockUtil {
                     lockContext.escalate(transaction);
                 }
             }
+        } else if (explicitLockType.equals(LockType.NL) && !LockType.compatible(effectiveLockType, requestType)) {
+            // fix these two situations
+            // IS -> S -> .... -> NL(request X)
+            // IX -> X -> .... -> NL(request S)
+            LockContext effectiveContext = LockUtil.getEffectiveParentContext(lockContext);
+            // clean up all children
+            // IS -> S -> .... -> NL(request X) -> NL -> NL -> .... -> NL(request X)
+            // IX -> X -> .... -> NL(request S) -> NL -> NL -> .... -> NL(request S)
+            LockUtil.ensureNoLockHeldOnChildren(effectiveContext);
+            // ensure lock again
+            // IS -> S -> .... -> NL(request X) -> IX -> IX -> .... -> X
+            // IX -> X -> .... -> NL(request S) -> IS -> IS -> .... -> S
+            LockUtil.ensureSufficientLockHeld(lockContext, requestType);
         } else {
             // effectiveLockType: NL / X / S
             // request: X / S
@@ -87,10 +106,8 @@ public class LockUtil {
             // 2. NL -> S
             // 3. X -> S
             // 4. S -> X
-            boolean canBeParentLock = parentContext == null || LockType.canBeParentLock(
-                    parentContext.getEffectiveLockType(transaction),
-                    requestType
-            );
+            boolean canBeParentLock = parentContext == null ||
+                    LockType.canBeParentLock(parentContext.getEffectiveLockType(transaction), requestType);
 
             if (!canBeParentLock) {
                 LockUtil.ensureParentContext(lockContext.parent, requestType);
@@ -103,7 +120,7 @@ public class LockUtil {
             //      and throws error, because we can't request X lock with S/IS parents.
             // IX -> X -> NL(request S)
             //      ==> LockType.compatible(S, NL) = true ==> will run lockContext.acquire(transaction, S)
-            //      and throws error, because we can't request S lock with X/IXSS parents.
+            //      and throws error, because we can't request S lock with X/IX parents.
 
             // pair 1 / 2
             if (LockType.compatible(requestType, effectiveLockType)) {
@@ -117,6 +134,17 @@ public class LockUtil {
             // IX -> X(request S) -> NL
             // step 1 (canBeParentLock = true)
             // step 2 (In the same transaction, type X is a strict type S, they are the same lock, so we don't need to do any ops.)
+        }
+    }
+
+    static public void ensureNoLockHeldOnChildren(LockContext root) {
+        TransactionContext transaction = TransactionContext.getTransaction();
+        List<LockContext> currentDBLocks = root.lockman.getLocks(transaction).stream()
+                .map(l -> LockContext.fromResourceName(root.lockman, l.name))
+                .collect(Collectors.toList());
+        List<LockContext> sortedDBLockCtx = LockUtil.getOrderedContext(currentDBLocks, true);
+        for (LockContext ctx : sortedDBLockCtx) {
+            ctx.release(transaction);
         }
     }
 
@@ -135,6 +163,16 @@ public class LockUtil {
         });
 
         return contexts;
+    }
+
+
+    static public LockContext getEffectiveParentContext(LockContext context) {
+        LockContext currentLockContext = context;
+        while (currentLockContext.parent != null) {
+            currentLockContext = currentLockContext.parent;
+        }
+
+        return currentLockContext;
     }
 
     static public void ensureParentContext(LockContext parentContext, LockType childLock) {
