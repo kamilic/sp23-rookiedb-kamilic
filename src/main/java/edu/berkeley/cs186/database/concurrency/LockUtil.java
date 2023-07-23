@@ -48,6 +48,13 @@ public class LockUtil {
             return;
         }
 
+        if (effectiveLockType.equals(requestType)) {
+            // IX -> X -> NL(request X)
+            // IS -> S -> NL(request S)
+            // do nothing
+            return;
+        }
+
         // The current lock type can effectively substitute the requested type
         if (requestType.equals(LockType.NL)) {
             lockContext.release(transaction);
