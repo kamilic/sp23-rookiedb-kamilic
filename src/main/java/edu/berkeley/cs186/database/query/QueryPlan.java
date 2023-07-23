@@ -1,6 +1,7 @@
 package edu.berkeley.cs186.database.query;
 
 import edu.berkeley.cs186.database.TransactionContext;
+import edu.berkeley.cs186.database.common.Pair;
 import edu.berkeley.cs186.database.common.PredicateOperator;
 import edu.berkeley.cs186.database.databox.DataBox;
 import edu.berkeley.cs186.database.query.expr.Expression;
@@ -11,6 +12,7 @@ import edu.berkeley.cs186.database.table.Schema;
 import edu.berkeley.cs186.database.table.Table;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * QueryPlan provides a set of functions to generate simple queries. Calling the
@@ -674,6 +676,42 @@ public class QueryPlan {
         //      calculate the cheapest join with the new table (the one you
         //      fetched an operator for from pass1Map) and the previously joined
         //      tables. Then, update the result map if needed.
+
+        for (Set<String> joinedTables : prevMap.keySet()) {
+            QueryOperator op = prevMap.get(joinedTables);
+
+            for (JoinPredicate pred : joinPredicates) {
+                String lTable = pred.leftTable, rTable = pred.rightTable;
+                Set<String> newKey = new HashSet<>(joinedTables);
+
+                // Set `joinedTables` is the cheapest join order calculated from the previous pass.
+                // case 1: If both predicate table exist in the set means that the cheapest calculation is done.
+                //         It should be dropped in the next pass, because we don't need a repeated join result.
+                //         We need to join a table which doesn't exist on join result, which is the following case 2.
+                // case 2: If one of the predicate table doesn't exist, we need to merge it to the result by invoking the `minCostJoinType`.
+                //         You can think of this result will be in the next pass "case 1".
+                if (joinedTables.contains(lTable) && !joinedTables.contains(rTable)) {
+                    newKey.add(rTable);
+                    result.put(newKey, minCostJoinType(op,
+                            pass1Map.get(Collections.singleton(rTable)),
+                            pred.leftColumn,
+                            pred.rightColumn
+                    ));
+                } else if (!joinedTables.contains(lTable) && joinedTables.contains(rTable)) {
+                    newKey.add(lTable);
+                    // Change predicate order will not change the result.
+                    result.put(newKey, minCostJoinType(op,
+                            pass1Map.get(Collections.singleton(lTable)),
+                            // `joinedTables.contains(rTable) == true` means that the predicate's right column is
+                            // existed on the result of QueryOperator.
+                            // So, we should use the right column in predicate as left column on joined QueryOperator.
+                            pred.rightColumn,
+                            pred.leftColumn
+                    ));
+                }
+            }
+        }
+
         return result;
     }
 
@@ -715,15 +753,27 @@ public class QueryPlan {
         // Pass 1: For each table, find the lowest cost QueryOperator to access
         // the table. Construct a mapping of each table name to its lowest cost
         // operator.
-        //
+        Map<Set<String>, QueryOperator> pass1 = new HashMap<>();
+        for (String tableName : tableNames) {
+            pass1.put(Collections.singleton(tableName), minCostSingleAccess(tableName));
+        }
+
         // Pass i: On each pass, use the results from the previous pass to find
         // the lowest cost joins with each table from pass 1. Repeat until all
         // tables have been joined.
-        //
+        Map<Set<String>, QueryOperator> passn = Map.copyOf(pass1);
+        do {
+            passn = minCostJoins(passn, pass1);
+        }
+        while (passn.keySet().stream().noneMatch(keys -> keys.containsAll(tableNames)));
+
         // Set the final operator to the lowest cost operator from the last
         // pass, add group by, project, sort and limit operators, and return an
         // iterator over the final operator.
-        return this.executeNaive(); // TODO(proj3_part2): Replace this!
+        this.finalOperator = minCostOperator(passn);
+        return getFinalOperator().iterator();
+
+//      return this.executeNaive(); // TODO(proj3_part2): Replace this!
     }
 
     // EXECUTE NAIVE ///////////////////////////////////////////////////////////
