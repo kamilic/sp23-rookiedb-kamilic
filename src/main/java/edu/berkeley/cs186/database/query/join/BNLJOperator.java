@@ -63,6 +63,9 @@ public class BNLJOperator extends JoinOperator {
         // The next record to return
         private Record nextRecord;
 
+        private boolean isInRightMost = false;
+        private boolean isInTopMost = false;
+
         private BNLJIterator() {
             super();
             this.leftSourceIterator = getLeftSource().iterator();
@@ -73,6 +76,8 @@ public class BNLJOperator extends JoinOperator {
             this.fetchNextRightPage();
 
             this.nextRecord = null;
+            this.isInTopMost = false;
+            this.isInRightMost = false;
         }
 
         /**
@@ -89,11 +94,17 @@ public class BNLJOperator extends JoinOperator {
          */
         private void fetchNextLeftBlock() {
             // TODO(proj3_part1): implement
-            leftBlockIterator = QueryOperator.getBlockIterator(
-                    leftSourceIterator,
-                    getLeftSource().getSchema(),
-                    numBuffers - 2
-            );
+            if (leftSourceIterator.hasNext()) {
+                isInTopMost = false;
+                leftBlockIterator = QueryOperator.getBlockIterator(
+                        leftSourceIterator,
+                        getLeftSource().getSchema(),
+                        numBuffers - 2
+                );
+                leftBlockIterator.markNext();
+            } else {
+                isInTopMost = true;
+            }
         }
 
         /**
@@ -109,12 +120,17 @@ public class BNLJOperator extends JoinOperator {
          */
         private void fetchNextRightPage() {
             // TODO(proj3_part1): implement
-            rightPageIterator = QueryOperator.getBlockIterator(
-                    rightSourceIterator,
-                    getRightSource().getSchema(),
-                    1
-            );
-            rightPageIterator.markNext();
+            if (rightSourceIterator.hasNext()) {
+                isInRightMost = false;
+                rightPageIterator = QueryOperator.getBlockIterator(
+                        rightSourceIterator,
+                        getRightSource().getSchema(),
+                        1
+                );
+                rightPageIterator.markNext();
+            } else {
+                isInRightMost = true;
+            }
         }
 
         /**
@@ -126,54 +142,34 @@ public class BNLJOperator extends JoinOperator {
          * of JoinOperator).
          */
 
-        public int count = 0;
         private Record fetchNextRecord() {
             // TODO(proj3_part1): implement
-            while (true) {
-                count += 1;
-                // `Right` / `Top` descriptions is based on gif images highlighted square position.
-                // https://cs186.gitbook.io/project/assignments/proj3/part-1-join-algorithms#task-1-nested-loop-joins
-                boolean isInRight = !rightPageIterator.hasNext();
-                boolean isInRightMost = isInRight && !rightSourceIterator.hasNext();
-                boolean isInTop = !leftBlockIterator.hasNext();
-                boolean isInTopMost = isInTop && !leftSourceIterator.hasNext();
-                boolean isInTopRight = isInRight && isInTop;
-
-                if (isInRightMost && isInTopMost) {
-                    return null;
-                }
-
-                if (leftRecord == null && !isInTop) {
+            while (!isInTopMost) {
+                if (leftRecord == null && leftBlockIterator.hasNext()) {
                     leftRecord = leftBlockIterator.next();
                 }
 
-                if (!isInRight) {
+                if (leftRecord != null && rightPageIterator.hasNext()) {
                     Record rightRecord = rightPageIterator.next();
                     if (compare(leftRecord, rightRecord) == 0) {
                         return leftRecord.concat(rightRecord);
                     }
-                    continue;
-                }
-
-                if (isInRightMost && isInTopRight) {
+                } else if (leftRecord != null) {
                     leftRecord = null;
-                    fetchNextLeftBlock();
-                    rightSourceIterator.reset();
+                    rightPageIterator.reset();
+                } else {
                     fetchNextRightPage();
-                    continue;
+                    if (!isInRightMost) {
+                        leftBlockIterator.reset();
+                    } else {
+                        fetchNextLeftBlock();
+                        rightSourceIterator.reset();
+                        fetchNextRightPage();
+                    }
                 }
-
-                if (!isInRightMost && isInTopRight) {
-                    leftRecord = null;
-                    leftBlockIterator.reset();
-                    fetchNextRightPage();
-                    continue;
-                }
-
-                // In right but not right most and top.
-                leftRecord = null;
-                rightPageIterator.reset();
             }
+
+            return null;
         }
 
         /**
