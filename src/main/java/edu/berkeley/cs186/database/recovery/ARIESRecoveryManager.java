@@ -96,7 +96,13 @@ public class ARIESRecoveryManager implements RecoveryManager {
     @Override
     public long commit(long transNum) {
         // TODO(proj5): implement
-        return -1L;
+        TransactionTableEntry transactionEntry = transactionTable.get(transNum);
+        LogRecord record = new CommitTransactionLogRecord(transNum, transactionEntry.lastLSN);
+        long LSN = logManager.appendToLog(record);
+        logManager.flushToLSN(LSN);
+        transactionEntry.lastLSN = LSN;
+        transactionEntry.transaction.setStatus(Transaction.Status.COMMITTING);
+        return LSN;
     }
 
     /**
@@ -119,7 +125,8 @@ public class ARIESRecoveryManager implements RecoveryManager {
         }
 
         long newLSN = logManager.appendToLog(new AbortTransactionLogRecord(transNum, tc.lastLSN));
-        logManager.flushToLSN(newLSN);
+        // Not to Flush log, just wait for `commit` method to finish the flush (No Force)
+        // logManager.flushToLSN(LSN);
         tc.transaction.setStatus(Transaction.Status.ABORTING);
         tc.lastLSN = newLSN;
 
@@ -166,7 +173,8 @@ public class ARIESRecoveryManager implements RecoveryManager {
         }
 
         long newLSN = logManager.appendToLog(new EndTransactionLogRecord(transNum, tc.lastLSN));
-        logManager.flushToLSN(newLSN);
+        // Not to Flush log, just wait for `commit` method to finish the flush (No Force)
+        // logManager.flushToLSN(LSN);
         tc.lastLSN = newLSN;
         tc.transaction.setStatus(Transaction.Status.COMPLETE);
         transactionTable.remove(transNum);
@@ -262,7 +270,16 @@ public class ARIESRecoveryManager implements RecoveryManager {
         assert (before.length == after.length);
         assert (before.length <= BufferManager.EFFECTIVE_PAGE_SIZE / 2);
         // TODO(proj5): implement
-        return -1L;
+        TransactionTableEntry transactionEntry = transactionTable.get(transNum);
+        LogRecord record = new UpdatePageLogRecord(transNum, pageNum, transactionEntry.lastLSN,
+                pageOffset, before, after);
+        long LSN = logManager.appendToLog(record);
+        // Update lastLSN
+        transactionEntry.lastLSN = LSN;
+        // Not to Flush log, just wait for `commit` method to finish the flush (No Force)
+        // logManager.flushToLSN(LSN);
+        dirtyPageTable.putIfAbsent(pageNum, LSN);
+        return LSN;
     }
 
     /**
