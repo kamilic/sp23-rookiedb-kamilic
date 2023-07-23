@@ -20,8 +20,8 @@ public class SortMergeOperator extends JoinOperator {
                              String rightColumnName,
                              TransactionContext transaction) {
         super(prepareLeft(transaction, leftSource, leftColumnName),
-              prepareRight(transaction, rightSource, rightColumnName),
-              leftColumnName, rightColumnName, transaction, JoinType.SORTMERGE);
+                prepareRight(transaction, rightSource, rightColumnName),
+                leftColumnName, rightColumnName, transaction, JoinType.SORTMERGE);
         this.stats = this.estimateStats();
     }
 
@@ -75,22 +75,21 @@ public class SortMergeOperator extends JoinOperator {
 
     /**
      * An implementation of Iterator that provides an iterator interface for this operator.
-     *    See lecture slides.
-     *
+     * See lecture slides.
+     * <p>
      * Before proceeding, you should read and understand SNLJOperator.java
-     *    You can find it in the same directory as this file.
-     *
+     * You can find it in the same directory as this file.
+     * <p>
      * Word of advice: try to decompose the problem into distinguishable sub-problems.
-     *    This means you'll probably want to add more methods than those given (Once again,
-     *    SNLJOperator.java might be a useful reference).
-     *
+     * This means you'll probably want to add more methods than those given (Once again,
+     * SNLJOperator.java might be a useful reference).
      */
     private class SortMergeIterator implements Iterator<Record> {
         /**
-        * Some member variables are provided for guidance, but there are many possible solutions.
-        * You should implement the solution that's best for you, using any member variables you need.
-        * You're free to use these member variables, but you're not obligated to.
-        */
+         * Some member variables are provided for guidance, but there are many possible solutions.
+         * You should implement the solution that's best for you, using any member variables you need.
+         * You're free to use these member variables, but you're not obligated to.
+         */
         private Iterator<Record> leftIterator;
         private BacktrackingIterator<Record> rightIterator;
         private Record leftRecord;
@@ -134,12 +133,72 @@ public class SortMergeOperator extends JoinOperator {
             return nextRecord;
         }
 
+        private int compareLeftRightValue() {
+            return leftRecord.getValue(getLeftColumnIndex()).compareTo(rightRecord.getValue(getRightColumnIndex()));
+        }
+
+        private void advanceLeftCoarse() {
+            // IF L < R, adv L Until L >= R
+            while (compareLeftRightValue() < 0) {
+                if (leftIterator.hasNext()) {
+                    leftRecord = leftIterator.next();
+                } else {
+                    return;
+                }
+            }
+        }
+
+        private void advanceLeft() {
+            if (leftIterator.hasNext()) {
+                leftRecord = leftIterator.next();
+            }
+        }
+
+        private void advanceRightCoarse() {
+            // IF L > R, adv R Until L <= R
+            while (compareLeftRightValue() > 0) {
+                if (rightIterator.hasNext()) {
+                    rightRecord = rightIterator.next();
+                } else {
+                    return;
+                }
+            }
+        }
+
+        private void advanceRight() {
+            if (rightIterator.hasNext()) {
+                rightRecord = rightIterator.next();
+            } else {
+                rightIterator.reset();
+                marked = false;
+            }
+        }
+
         /**
          * Returns the next record that should be yielded from this join,
          * or null if there are no more records to join.
          */
         private Record fetchNextRecord() {
             // TODO(proj3_part1): implement
+
+            if (!marked) {
+                advanceLeftCoarse();
+                advanceRightCoarse();
+                marked = true;
+                rightIterator.markNext();
+            }
+
+            if (compareLeftRightValue() == 0) {
+                Record joinRecord = leftRecord.concat(rightRecord);
+                advanceRight();
+                return joinRecord;
+            } else {
+                marked = false;
+                advanceLeft();
+                advanceRight();
+            }
+
+
             return null;
         }
 
