@@ -94,8 +94,6 @@ public class QueryPlan {
     }
 
     public QueryOperator getFinalOperator() {
-        addGroupBy();
-        addProject();
         return this.finalOperator;
     }
 
@@ -772,6 +770,10 @@ public class QueryPlan {
         // pass, add group by, project, sort and limit operators, and return an
         // iterator over the final operator.
         this.finalOperator = minCostOperator(passn);
+        this.addGroupBy();
+        this.addProject();
+        this.addSort();
+        this.addLimit();
         return getFinalOperator().iterator();
     }
 
