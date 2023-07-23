@@ -768,6 +768,10 @@ public class ARIESRecoveryManager implements RecoveryManager {
      */
     void restartRedo() {
         // TODO(proj5): implement
+        // find the lowest recLSN on dpt.
+        // get Iterator from lowest recLSN
+
+
         return;
     }
 
