@@ -722,7 +722,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
         for (TransactionTableEntry entry : transactionTable.values()) {
             Transaction tx = entry.transaction;
             long txn = tx.getTransNum();
-            TransactionTableEntry txe = transactionTable.get(txn);
+            TransactionTableEntry undoTxe = transactionTable.get(txn);
 
             // The transaction table at this point should have transactions that are in one of the following states:
             // RUNNING, COMMITTING, or RECOVERY_ABORTING.
@@ -734,7 +734,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
 
                 case RUNNING: {
                     tx.setStatus(Transaction.Status.RECOVERY_ABORTING);
-                    txe.lastLSN = logManager.appendToLog(new AbortTransactionLogRecord(txn, txe.lastLSN));
+                    undoTxe.lastLSN = logManager.appendToLog(new AbortTransactionLogRecord(txn, undoTxe.lastLSN));
                 }
                 break;
 
@@ -742,7 +742,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
                     tx.cleanup();
                     tx.setStatus(Transaction.Status.COMPLETE);
                     transactionTable.remove(txn);
-                    txe.lastLSN = logManager.appendToLog(new EndTransactionLogRecord(txn, txe.lastLSN));
+                    undoTxe.lastLSN = logManager.appendToLog(new EndTransactionLogRecord(txn, undoTxe.lastLSN));
                 }
                 break;
 
@@ -770,7 +770,9 @@ public class ARIESRecoveryManager implements RecoveryManager {
         // TODO(proj5): implement
         // find the lowest recLSN on dpt.
         Optional<Long> recLSN = dirtyPageTable.values().stream().reduce(Math::min);
-        assert recLSN.isPresent();
+        if (recLSN.isEmpty()) {
+            return;
+        }
 
         Iterator<LogRecord> records = logManager.scanFrom(recLSN.get());
 
@@ -832,11 +834,6 @@ public class ARIESRecoveryManager implements RecoveryManager {
             }
 
         }
-
-        // get Iterator from lowest recLSN
-
-
-        return;
     }
 
     /**
@@ -854,44 +851,59 @@ public class ARIESRecoveryManager implements RecoveryManager {
      */
     void restartUndo() {
         // TODO(proj5): implement
+
+
+        // Definition of the implementation of Comparator:
+        // > a negative integer, zero, or a positive integer as the first argument is less than, equal to, or greater than the second.
+        // BUT:
+        // The head of `PriorityQueue` is the ###LEAST### element with respect to the specified ordering (a min-heap).
+        // So our `Comparator` should return a `reversed` result of its original definitions.
         Comparator<TransactionTableEntry> txComparator = (o1, o2) -> {
-            long diff = (o1.lastLSN - o2.lastLSN);
+            long diff = (o2.lastLSN - o1.lastLSN);
             return diff == 0 ? 0 : diff > 0 ? 1 : -1;
         };
         PriorityQueue<TransactionTableEntry> toUndo = new PriorityQueue<>(txComparator);
-        transactionTable.values().forEach(toUndo::add);
+        toUndo.addAll(transactionTable.values());
 
         long tailLSN = 0;
 
         while (!toUndo.isEmpty()) {
-            TransactionTableEntry txe = toUndo.poll();
-            long undoLSN = txe.lastLSN;
-            LogRecord rec = logManager.fetchLogRecord(undoLSN);
+            // undo Txe.
+            TransactionTableEntry undoTxe = toUndo.poll();
+            long undoLSN = undoTxe.lastLSN;
 
-            if (rec.isUndoable()) {
-                LogRecord clr = rec.undo(undoLSN);
+            // Realtime Txe.
+            long txn = undoTxe.transaction.getTransNum();
+            TransactionTableEntry currentTxe = transactionTable.get(txn);
+
+            LogRecord recToUndo = logManager.fetchLogRecord(undoLSN);
+
+            if (recToUndo.isUndoable()) {
+                LogRecord clr = recToUndo.undo(currentTxe.lastLSN);
                 tailLSN = logManager.appendToLog(clr);
-                rec.redo(this, diskSpaceManager, bufferManager);
+                currentTxe.lastLSN = tailLSN;
+                clr.redo(this, diskSpaceManager, bufferManager);
             }
 
-            long txn = txe.transaction.getTransNum();
-            long replacedTxeLastLSN = rec.getUndoNextLSN().orElse(
-                    rec.getPrevLSN().orElse(0L)
-            );
-
+            long replacedTxeLastLSN = recToUndo.getUndoNextLSN()
+                    .orElse(recToUndo.getPrevLSN().orElse(0L));
             if (replacedTxeLastLSN > 0) {
                 // replace the entry with a new one, using the undoNextLSN if available,
                 // if the prevLSN otherwise.
-                TransactionTableEntry replacedTxe = new TransactionTableEntry(txe.transaction);
+                TransactionTableEntry replacedTxe = new TransactionTableEntry(undoTxe.transaction);
                 replacedTxe.lastLSN = replacedTxeLastLSN;
                 toUndo.add(replacedTxe);
             } else {
                 // if the new LSN is 0, clean up the transaction,
                 // set the status to complete and remove from transaction table.
-                txe.transaction.cleanup();
-                txe.transaction.setStatus(Transaction.Status.COMPLETE);
+                undoTxe.transaction.cleanup();
+                currentTxe.transaction.setStatus(Transaction.Status.COMPLETE);
                 transactionTable.remove(txn);
+                tailLSN = logManager.appendToLog(
+                        new EndTransactionLogRecord(txn, currentTxe.lastLSN)
+                );
             }
+
         }
 
         if (tailLSN > 0) {
