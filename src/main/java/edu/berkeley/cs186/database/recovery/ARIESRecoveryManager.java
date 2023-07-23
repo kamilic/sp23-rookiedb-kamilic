@@ -481,7 +481,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
 
         // TODO(proj5): generate end checkpoint record(s) for DPT and transaction table
         for (long dptKey : dirtyPageTable.keySet()) {
-            if (!EndCheckpointLogRecord.fitsInOneRecord(chkptDPT.size(), 0)) {
+            if (!EndCheckpointLogRecord.fitsInOneRecord(chkptDPT.size() + 1, 0)) {
                 endRecord = new EndCheckpointLogRecord(chkptDPT, chkptTxnTable);
                 logManager.appendToLog(endRecord);
                 chkptDPT.clear();
@@ -491,7 +491,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
         }
 
         for (long txnKey : transactionTable.keySet()) {
-            if (!EndCheckpointLogRecord.fitsInOneRecord(chkptDPT.size(), chkptTxnTable.size())) {
+            if (!EndCheckpointLogRecord.fitsInOneRecord(chkptDPT.size(), chkptTxnTable.size() + 1)) {
                 endRecord = new EndCheckpointLogRecord(chkptDPT, chkptTxnTable);
                 logManager.appendToLog(endRecord);
                 chkptDPT.clear();
@@ -639,10 +639,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
                 if (currentRecord instanceof UpdatePageLogRecord || currentRecord instanceof UndoUpdatePageLogRecord) {
                     // dirty pages -> update recLSN to current record LSN if absent.
                     dirtyPageTable.putIfAbsent(pageNum, currentRecord.LSN);
-                }
-
-                // free/undoalloc page always flush changes to disk
-                if (currentRecord instanceof FreePageLogRecord || currentRecord instanceof UndoAllocPageLogRecord) {
+                } else if (currentRecord instanceof FreePageLogRecord || currentRecord instanceof UndoAllocPageLogRecord) {
                     bufferManager.evict(pageNum);
                     dirtyPageTable.remove(pageNum);
                 }
@@ -658,10 +655,13 @@ public class ARIESRecoveryManager implements RecoveryManager {
                 continue;
             }
 
+            // if END_TRANSACTION: clean up transaction (Transaction#cleanup), remove from txn table,
+            // and add to endedTransactions
             if (currentRecord instanceof EndTransactionLogRecord) {
                 long txn = currentRecord.getTransNum().get();
                 TransactionTableEntry entry = transactionTable.get(txn);
                 entry.transaction.cleanup();
+                entry.transaction.setStatus(Transaction.Status.COMPLETE);
                 endedTransactions.add(txn);
                 transactionTable.remove(txn);
                 continue;
@@ -699,6 +699,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
                                 // `complete` is always more "advanced"
                                 if (statusOnCheckpoint == Transaction.Status.COMPLETE) {
                                     entry.transaction.setStatus(Transaction.Status.COMPLETE);
+
                                     return;
                                 }
 
@@ -721,6 +722,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
         for (TransactionTableEntry entry : transactionTable.values()) {
             Transaction tx = entry.transaction;
             long txn = tx.getTransNum();
+            TransactionTableEntry txe = transactionTable.get(txn);
 
             // The transaction table at this point should have transactions that are in one of the following states:
             // RUNNING, COMMITTING, or RECOVERY_ABORTING.
@@ -732,7 +734,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
 
                 case RUNNING: {
                     tx.setStatus(Transaction.Status.RECOVERY_ABORTING);
-                    logManager.appendToLog(new AbortTransactionLogRecord(txn, LSN));
+                    txe.lastLSN = logManager.appendToLog(new AbortTransactionLogRecord(txn, txe.lastLSN));
                 }
                 break;
 
@@ -740,7 +742,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
                     tx.cleanup();
                     tx.setStatus(Transaction.Status.COMPLETE);
                     transactionTable.remove(txn);
-                    logManager.appendToLog(new EndTransactionLogRecord(txn, LSN));
+                    txe.lastLSN = logManager.appendToLog(new EndTransactionLogRecord(txn, txe.lastLSN));
                 }
                 break;
 
