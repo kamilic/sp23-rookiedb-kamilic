@@ -76,6 +76,33 @@ public enum LockType {
     }
 
     /**
+     * This method returns the lock on the parent resource
+     * that should be escalated to for a lock of type A.
+     */
+    public static LockType escalatedLock(LockType a) {
+        if (a == null) {
+            throw new NullPointerException("null lock type");
+        }
+
+        switch (a) {
+            case S:
+            case IS:
+                return S;
+
+            case X:
+            case IX:
+            case SIX:
+                return X;
+
+            case NL:
+                return NL;
+
+            default:
+                throw new UnsupportedOperationException("bad lock type");
+        }
+    }
+
+    /**
      * This method returns if parentLockType has permissions to grant a childLockType
      * on a child.
      */
