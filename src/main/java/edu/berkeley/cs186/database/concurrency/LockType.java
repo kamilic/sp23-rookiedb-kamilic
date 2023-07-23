@@ -22,6 +22,29 @@ public enum LockType {
             throw new NullPointerException("null lock type");
         }
         // TODO(proj4_part1): implement
+        if (a.equals(LockType.NL) || b.equals(LockType.NL)) {
+            return true;
+        }
+
+        if (a.equals(LockType.IX) && b.equals(LockType.IX)) {
+            return true;
+        }
+
+        if (a.equals(LockType.S) && b.equals(LockType.S)) {
+            return true;
+        }
+
+        if ((a.equals(LockType.SIX) && b.equals(LockType.IS)) || (b.equals(LockType.SIX) && a.equals(LockType.IS))) {
+            return true;
+        }
+
+        if ((a.equals(LockType.S) && b.equals(LockType.IS)) || (b.equals(LockType.S) && a.equals(LockType.IS))) {
+            return true;
+        }
+
+        if ((a.isIntent() && !a.equals(LockType.SIX)) && (b.isIntent() && !b.equals(LockType.SIX))) {
+            return true;
+        }
 
         return false;
     }
@@ -35,13 +58,20 @@ public enum LockType {
             throw new NullPointerException("null lock type");
         }
         switch (a) {
-        case S: return IS;
-        case X: return IX;
-        case IS: return IS;
-        case IX: return IX;
-        case SIX: return IX;
-        case NL: return NL;
-        default: throw new UnsupportedOperationException("bad lock type");
+            case S:
+                return IS;
+            case X:
+                return IX;
+            case IS:
+                return IS;
+            case IX:
+                return IX;
+            case SIX:
+                return IX;
+            case NL:
+                return NL;
+            default:
+                throw new UnsupportedOperationException("bad lock type");
         }
     }
 
@@ -54,6 +84,25 @@ public enum LockType {
             throw new NullPointerException("null lock type");
         }
         // TODO(proj4_part1): implement
+        if (childLockType.equals(LockType.NL)) {
+            return true;
+        }
+
+        // IX can be the parent of any type of lock
+        // S | IS can be IX
+        // SIX parent must be IX
+        // X | IX can be IX
+        if (parentLockType.equals(LockType.IX)) {
+            return true;
+        }
+
+        if (childLockType.equals(LockType.S) || childLockType.equals(LockType.IS)) {
+            return parentLockType.equals(LockType.IS);
+        }
+
+        if (childLockType.equals(LockType.X) || childLockType.equals(LockType.IX)) {
+            return parentLockType.equals(LockType.SIX);
+        }
 
         return false;
     }
@@ -69,9 +118,30 @@ public enum LockType {
             throw new NullPointerException("null lock type");
         }
         // TODO(proj4_part1): implement
+        if (required.equals(substitute)) {
+            return true;
+        }
+
+        if (required.equals(LockType.NL)) {
+            return true;
+        }
+
+        if ((required.equals(LockType.IS) && substitute.equals(LockType.IX))) {
+            return true;
+        }
+
+        if ((required.equals(LockType.IX) && substitute.equals(LockType.SIX))) {
+            return true;
+        }
+
+        // X can be considered as a strict S lock.
+        if (required.equals(LockType.S) && (substitute.equals(LockType.SIX) || substitute.equals(LockType.X))) {
+            return true;
+        }
 
         return false;
     }
+
 
     /**
      * @return True if this lock is IX, IS, or SIX. False otherwise.
@@ -83,13 +153,20 @@ public enum LockType {
     @Override
     public String toString() {
         switch (this) {
-        case S: return "S";
-        case X: return "X";
-        case IS: return "IS";
-        case IX: return "IX";
-        case SIX: return "SIX";
-        case NL: return "NL";
-        default: throw new UnsupportedOperationException("bad lock type");
+            case S:
+                return "S";
+            case X:
+                return "X";
+            case IS:
+                return "IS";
+            case IX:
+                return "IX";
+            case SIX:
+                return "SIX";
+            case NL:
+                return "NL";
+            default:
+                throw new UnsupportedOperationException("bad lock type");
         }
     }
 }
