@@ -115,7 +115,9 @@ public class LockContext {
         }
 
         lockman.acquire(transaction, resourceName, lockType);
-        numChildLocks.put(transaction.getTransNum(), this.getNumChildren(transaction) + 1);
+        if (parent != null) {
+            parent.numChildLocks.put(transaction.getTransNum(), this.getNumChildren(transaction) + 1);
+        }
     }
 
     /**
@@ -132,8 +134,36 @@ public class LockContext {
     public void release(TransactionContext transaction)
             throws NoLockHeldException, InvalidLockException {
         // TODO(proj4_part2): implement
+        if (this.readonly) {
+            throw new UnsupportedOperationException("Current resource is readonly");
+        }
+        ResourceName resourceName = getResourceName();
+        List<Lock> allTransLocks = lockman.getLocks(transaction);
+        Lock currentLock = null;
+        List<Lock> allChildLocks = new ArrayList<>();
+        for (Lock l : allTransLocks) {
+            if (l.name.isDescendantOf(resourceName)) {
+                allChildLocks.add(l);
+            }
 
-        return;
+            if (l.name.equals(resourceName)) {
+                currentLock = l;
+            }
+        }
+
+        if (currentLock == null) {
+            throw new NoLockHeldException("No Lock on this transaction.");
+        }
+
+        for (Lock l : allChildLocks) {
+            if (LockType.canBeParentLock(currentLock.lockType, l.lockType)) {
+                throw new InvalidLockException("Attempting to release an " +
+                        currentLock.lockType + "lock containing an " + l.lockType  + " lock on its children");
+            }
+        }
+
+        lockman.release(transaction, resourceName);
+        numChildLocks.put(transaction.getTransNum(), this.getNumChildren(transaction) - 1);
     }
 
     /**
