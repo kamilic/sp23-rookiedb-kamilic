@@ -787,11 +787,12 @@ public class ARIESRecoveryManager implements RecoveryManager {
                 case FREE_PART:
                 case UNDO_ALLOC_PART:
                 case UNDO_FREE_PART:
-                // a record that allocates a page (AllocPage, UndoFreePage)
+                    // a record that allocates a page (AllocPage, UndoFreePage)
                 case ALLOC_PAGE:
                 case UNDO_FREE_PAGE: {
                     rec.redo(this, diskSpaceManager, bufferManager);
-                } break;
+                }
+                break;
 
                 // a record that modifies a page (UpdatePage, UndoUpdatePage, UndoAllocPage, FreePage)
                 case UPDATE_PAGE:
@@ -826,7 +827,8 @@ public class ARIESRecoveryManager implements RecoveryManager {
                         page.unpin();
                     }
                     rec.redo(this, diskSpaceManager, bufferManager);
-                } break;
+                }
+                break;
             }
 
         }
@@ -852,7 +854,49 @@ public class ARIESRecoveryManager implements RecoveryManager {
      */
     void restartUndo() {
         // TODO(proj5): implement
-        return;
+        Comparator<TransactionTableEntry> txComparator = (o1, o2) -> {
+            long diff = (o1.lastLSN - o2.lastLSN);
+            return diff == 0 ? 0 : diff > 0 ? 1 : -1;
+        };
+        PriorityQueue<TransactionTableEntry> toUndo = new PriorityQueue<>(txComparator);
+        transactionTable.values().forEach(toUndo::add);
+
+        long tailLSN = 0;
+
+        while (!toUndo.isEmpty()) {
+            TransactionTableEntry txe = toUndo.poll();
+            long undoLSN = txe.lastLSN;
+            LogRecord rec = logManager.fetchLogRecord(undoLSN);
+
+            if (rec.isUndoable()) {
+                LogRecord clr = rec.undo(undoLSN);
+                tailLSN = logManager.appendToLog(clr);
+                rec.redo(this, diskSpaceManager, bufferManager);
+            }
+
+            long txn = txe.transaction.getTransNum();
+            long replacedTxeLastLSN = rec.getUndoNextLSN().orElse(
+                    rec.getPrevLSN().orElse(0L)
+            );
+
+            if (replacedTxeLastLSN > 0) {
+                // replace the entry with a new one, using the undoNextLSN if available,
+                // if the prevLSN otherwise.
+                TransactionTableEntry replacedTxe = new TransactionTableEntry(txe.transaction);
+                replacedTxe.lastLSN = replacedTxeLastLSN;
+                toUndo.add(replacedTxe);
+            } else {
+                // if the new LSN is 0, clean up the transaction,
+                // set the status to complete and remove from transaction table.
+                txe.transaction.cleanup();
+                txe.transaction.setStatus(Transaction.Status.COMPLETE);
+                transactionTable.remove(txn);
+            }
+        }
+
+        if (tailLSN > 0) {
+            logManager.flushToLSN(tailLSN);
+        }
     }
 
     /**
