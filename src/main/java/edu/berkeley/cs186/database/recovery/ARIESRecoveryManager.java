@@ -218,8 +218,6 @@ public class ARIESRecoveryManager implements RecoveryManager {
 
             currentLSN = r.getPrevLSN().orElse(LSN);
         }
-
-        currentLSN = -1L;
     }
 
     /**
@@ -454,9 +452,7 @@ public class ARIESRecoveryManager implements RecoveryManager {
 
         // All of the transaction's changes strictly after the record at LSN should be undone.
         long savepointLSN = transactionEntry.getSavepoint(name);
-
-        // TODO(proj5): implement
-        return;
+        rollbackToLSN(transNum, savepointLSN);
     }
 
     /**
@@ -481,12 +477,35 @@ public class ARIESRecoveryManager implements RecoveryManager {
 
         Map<Long, Long> chkptDPT = new HashMap<>();
         Map<Long, Pair<Transaction.Status, Long>> chkptTxnTable = new HashMap<>();
+        LogRecord endRecord = null;
 
         // TODO(proj5): generate end checkpoint record(s) for DPT and transaction table
+        for (long dptKey : dirtyPageTable.keySet()) {
+            if (!EndCheckpointLogRecord.fitsInOneRecord(chkptDPT.size(), 0)) {
+                endRecord = new EndCheckpointLogRecord(chkptDPT, chkptTxnTable);
+                logManager.appendToLog(endRecord);
+                chkptDPT.clear();
+            }
+
+            chkptDPT.put(dptKey, dirtyPageTable.get(dptKey));
+        }
+
+        for (long txnKey : transactionTable.keySet()) {
+            if (!EndCheckpointLogRecord.fitsInOneRecord(chkptDPT.size(), chkptTxnTable.size())) {
+                endRecord = new EndCheckpointLogRecord(chkptDPT, chkptTxnTable);
+                logManager.appendToLog(endRecord);
+                chkptDPT.clear();
+                chkptTxnTable.clear();
+            }
+
+            TransactionTableEntry txn = transactionTable.get(txnKey);
+            chkptTxnTable.put(txnKey, new Pair<>(txn.transaction.getStatus(), txn.lastLSN));
+        }
 
         // Last end checkpoint record
-        LogRecord endRecord = new EndCheckpointLogRecord(chkptDPT, chkptTxnTable);
+        endRecord = new EndCheckpointLogRecord(chkptDPT, chkptTxnTable);
         logManager.appendToLog(endRecord);
+
         // Ensure checkpoint is fully flushed before updating the master record
         flushToLSN(endRecord.getLSN());
 
