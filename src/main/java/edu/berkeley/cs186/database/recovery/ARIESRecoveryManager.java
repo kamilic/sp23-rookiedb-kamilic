@@ -626,7 +626,9 @@ public class ARIESRecoveryManager implements RecoveryManager {
             if (currentRecord.getTransNum().isPresent()) {
                 long txn = currentRecord.getTransNum().get();
                 // if not in tx table, create a tx and append to tx table
-                transactionTable.putIfAbsent(txn, new TransactionTableEntry(newTransaction.apply(txn)));
+                if (!transactionTable.containsKey(txn)) {
+                    transactionTable.put(txn, new TransactionTableEntry(newTransaction.apply(txn)));
+                }
                 TransactionTableEntry entry = transactionTable.get(txn);
                 // if tx in tx table, update lastLSN
                 entry.lastLSN = currentRecord.getLSN();
@@ -685,7 +687,9 @@ public class ARIESRecoveryManager implements RecoveryManager {
                 rec.getTransactionTable()
                         .forEach(((txn, statusLastLSNPair) -> {
                             if (!endedTransactions.contains(txn)) {
-                                transactionTable.putIfAbsent(txn, new TransactionTableEntry(newTransaction.apply(txn)));
+                                if (!transactionTable.containsKey(txn)) {
+                                    transactionTable.put(txn, new TransactionTableEntry(newTransaction.apply(txn)));
+                                }
                                 TransactionTableEntry entry = transactionTable.get(txn);
                                 long lastLSNOnCheckpoint = statusLastLSNPair.getSecond();
                                 entry.lastLSN = Math.max(lastLSNOnCheckpoint, entry.lastLSN);
@@ -819,15 +823,18 @@ public class ARIESRecoveryManager implements RecoveryManager {
                     }
 
                     Page page = bufferManager.fetchPage(new DummyLockContext(), recPage);
+                    long pageLSN = -1;
                     try {
-                        long pageLSN = page.getPageLSN();
-                        // the pageLSN on the page itself is strictly less than the LSN of the record.
-                        if (pageLSN >= rec.LSN) {
-                            break;
-                        }
+                        pageLSN = page.getPageLSN();
                     } finally {
                         page.unpin();
                     }
+
+                    // the pageLSN on the page itself is strictly less than the LSN of the record.
+                    if (pageLSN >= rec.LSN) {
+                        break;
+                    }
+
                     rec.redo(this, diskSpaceManager, bufferManager);
                 }
                 break;

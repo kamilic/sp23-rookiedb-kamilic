@@ -275,7 +275,7 @@ public class TestLockManager {
 
         // release T1 X lock
         runner.run(2, () -> lockman.release(transactions[1], tables[1]));
-        runner.join(2);
+        runner.joinAll();
 
         // T0 will be released because no lock on table1 now
         assertFalse(transactions[0].getBlocked());
