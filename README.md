@@ -1,3 +1,9 @@
+
+# Preface
+All provided tests are passed.  
+And some details which made me confused are commented on code. 🎆  
+I am glad these comments help you to implement CS168 project :).
+
 # RookieDB
 
 ![The official unofficial mascot of the class projects](images/derpydb-small.jpg)
