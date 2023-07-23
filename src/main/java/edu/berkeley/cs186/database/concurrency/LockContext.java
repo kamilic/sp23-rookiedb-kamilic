@@ -267,15 +267,25 @@ public class LockContext {
                 });
 
         if (!currentLockType.equals(targetLockType)) {
-            // acquire new escalate lock type
-            acquire(transaction, targetLockType);
+            List<ResourceName> resourceNames = descendantLocks.stream()
+                    .map(l -> l.name).collect(Collectors.toList());
+
+            resourceNames.add(getResourceName());
+
+            // Why using `acquireAndRelease`?
+            // The hints on the comment: You should only make *one* mutating call to the lock manager.
+            lockman.acquireAndRelease(transaction, getResourceName(), targetLockType, resourceNames);
+
+            for (Lock l : descendantLocks) {
+                LockContext lockContext = LockContext.fromResourceName(lockman, l.name);
+                LockContext parent = lockContext.parent;
+                if (parent != null) {
+                    parent.numChildLocks.put(transaction.getTransNum(), parent.getNumChildren(transaction) - 1);
+                }
+            }
         }
 
-        // release all descendant locks
-        for (Lock l : descendantLocks) {
-            LockContext lockContext = LockContext.fromResourceName(lockman, l.name);
-            lockContext.release(transaction);
-        }
+
     }
 
     /**
