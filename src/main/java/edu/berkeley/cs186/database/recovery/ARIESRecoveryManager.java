@@ -614,7 +614,142 @@ public class ARIESRecoveryManager implements RecoveryManager {
         // Set of transactions that have completed
         Set<Long> endedTransactions = new HashSet<>();
         // TODO(proj5): implement
-        return;
+
+        // scanning log records, starting at the beginning of the last successful checkpoint.
+        Iterator<LogRecord> recordFromLastCheckpoint = logManager.scanFrom(LSN);
+        LogRecord currentRecord = null;
+
+        while (recordFromLastCheckpoint.hasNext()) {
+            currentRecord = recordFromLastCheckpoint.next();
+
+            // If record involve tx, should add a new tx on tx table
+            if (currentRecord.getTransNum().isPresent()) {
+                long txn = currentRecord.getTransNum().get();
+                // if not in tx table, create a tx and append to tx table
+                transactionTable.putIfAbsent(txn, new TransactionTableEntry(newTransaction.apply(txn)));
+                TransactionTableEntry entry = transactionTable.get(txn);
+                // if tx in tx table, update lastLSN
+                entry.lastLSN = currentRecord.getLSN();
+            }
+
+            // If the log record is page-related record, should modify dpt
+            if (currentRecord.getPageNum().isPresent()) {
+                long pageNum = currentRecord.getPageNum().get();
+                // update/undoupdate page will dirty pages
+                if (currentRecord instanceof UpdatePageLogRecord || currentRecord instanceof UndoUpdatePageLogRecord) {
+                    // dirty pages -> update recLSN to current record LSN if absent.
+                    dirtyPageTable.putIfAbsent(pageNum, currentRecord.LSN);
+                }
+
+                // free/undoalloc page always flush changes to disk
+                if (currentRecord instanceof FreePageLogRecord || currentRecord instanceof UndoAllocPageLogRecord) {
+                    bufferManager.evict(pageNum);
+                    dirtyPageTable.remove(pageNum);
+                }
+                // no action needed for alloc/undofree page
+                continue;
+            }
+
+            // If the log record is for a change in transaction status, advance transaction status
+            if (currentRecord instanceof CommitTransactionLogRecord) {
+                long txn = currentRecord.getTransNum().get();
+                TransactionTableEntry entry = transactionTable.get(txn);
+                entry.transaction.setStatus(Transaction.Status.COMMITTING);
+                continue;
+            }
+
+            if (currentRecord instanceof EndTransactionLogRecord) {
+                long txn = currentRecord.getTransNum().get();
+                TransactionTableEntry entry = transactionTable.get(txn);
+                entry.transaction.cleanup();
+                endedTransactions.add(txn);
+                transactionTable.remove(txn);
+                continue;
+            }
+
+            if (currentRecord instanceof AbortTransactionLogRecord) {
+                long txn = currentRecord.getTransNum().get();
+                TransactionTableEntry entry = transactionTable.get(txn);
+                entry.transaction.setStatus(Transaction.Status.RECOVERY_ABORTING);
+                continue;
+            }
+
+            // If the log record is an end_checkpoint record
+            if (currentRecord instanceof EndCheckpointLogRecord) {
+                EndCheckpointLogRecord rec = (EndCheckpointLogRecord) currentRecord;
+
+                // The recLSN of a page in the checkpoint should always be used,
+                // even if we have a record in the dirty page table already,
+                // since the checkpoint is always more accurate than anything we can infer from just the log.
+                dirtyPageTable.putAll(rec.getDirtyPageTable());
+                rec.getTransactionTable()
+                        .forEach(((txn, statusLastLSNPair) -> {
+                            if (!endedTransactions.contains(txn)) {
+                                transactionTable.putIfAbsent(txn, new TransactionTableEntry(newTransaction.apply(txn)));
+                                TransactionTableEntry entry = transactionTable.get(txn);
+                                long lastLSNOnCheckpoint = statusLastLSNPair.getSecond();
+                                entry.lastLSN = Math.max(lastLSNOnCheckpoint, entry.lastLSN);
+
+                                Transaction.Status statusOnCheckpoint = statusLastLSNPair.getFirst();
+                                Transaction.Status statusOnCurrentTx = entry.transaction.getStatus();
+
+
+                                // You should only update a transaction's status if the status in the checkpoint is more "advanced" than the status in memory.
+
+                                // `complete` is always more "advanced"
+                                if (statusOnCheckpoint == Transaction.Status.COMPLETE) {
+                                    entry.transaction.setStatus(Transaction.Status.COMPLETE);
+                                    return;
+                                }
+
+                                // running -> committing -> complete
+                                if (statusOnCurrentTx == Transaction.Status.RUNNING && statusOnCheckpoint == Transaction.Status.COMMITTING) {
+                                    entry.transaction.setStatus(Transaction.Status.COMMITTING);
+                                }
+
+                                // running -> aborting -> complete
+                                if (statusOnCurrentTx == Transaction.Status.RUNNING && statusOnCheckpoint == Transaction.Status.ABORTING) {
+                                    entry.transaction.setStatus(Transaction.Status.RECOVERY_ABORTING);
+                                }
+                            }
+                        }));
+
+
+            }
+        }
+
+        for (TransactionTableEntry entry : transactionTable.values()) {
+            Transaction tx = entry.transaction;
+            long txn = tx.getTransNum();
+
+            // The transaction table at this point should have transactions that are in one of the following states:
+            // RUNNING, COMMITTING, or RECOVERY_ABORTING.
+            switch (tx.getStatus()) {
+                case RECOVERY_ABORTING: {
+                    // do nothing.
+                }
+                break;
+
+                case RUNNING: {
+                    tx.setStatus(Transaction.Status.RECOVERY_ABORTING);
+                    logManager.appendToLog(new AbortTransactionLogRecord(txn, LSN));
+                }
+                break;
+
+                case COMMITTING: {
+                    tx.cleanup();
+                    tx.setStatus(Transaction.Status.COMPLETE);
+                    transactionTable.remove(txn);
+                    logManager.appendToLog(new EndTransactionLogRecord(txn, LSN));
+                }
+                break;
+
+                default: {
+                    // never happen.
+                    assert false;
+                }
+            }
+        }
     }
 
     /**
