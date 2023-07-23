@@ -244,7 +244,7 @@ public class LockManager {
 
             // Why throw error?
             // Each transaction can only hold one resource lock based on 2PL.
-            if (!transactionLockType.equals(LockType.NL)) {
+            if (transactionLockType.equals(lockType)) {
                 throw new DuplicateLockRequestException("Lock on resource " + name.toString() + " is held by transaction " + transaction.toString());
             }
 
