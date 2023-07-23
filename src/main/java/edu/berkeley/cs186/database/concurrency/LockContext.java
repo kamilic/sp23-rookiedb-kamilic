@@ -109,7 +109,6 @@ public class LockContext {
                     lockType + "lock with an " + parent.getExplicitLockType(transaction) + " lock");
         }
 
-
         if (hasSIXAncestor(transaction) && isLockTypeIsISOrS) {
             throw new InvalidLockException("Lock is invalid.");
         }
@@ -138,27 +137,13 @@ public class LockContext {
             throw new UnsupportedOperationException("Current resource is readonly");
         }
         ResourceName resourceName = getResourceName();
-        List<Lock> allTransLocks = lockman.getLocks(transaction);
-        Lock currentLock = null;
-        List<Lock> allChildLocks = new ArrayList<>();
-        for (Lock l : allTransLocks) {
-            if (l.name.isDescendantOf(resourceName)) {
-                allChildLocks.add(l);
-            }
-
-            if (l.name.equals(resourceName)) {
-                currentLock = l;
-            }
-        }
-
-        if (currentLock == null) {
-            throw new NoLockHeldException("No Lock on this transaction.");
-        }
+        List<Lock> allChildLocks = descendantLocks(transaction);
+        LockType currentLockType = lockman.getLockType(transaction, resourceName);
 
         for (Lock l : allChildLocks) {
-            if (LockType.canBeParentLock(currentLock.lockType, l.lockType)) {
+            if (LockType.canBeParentLock(currentLockType, l.lockType)) {
                 throw new InvalidLockException("Attempting to release an " +
-                        currentLock.lockType + "lock containing an " + l.lockType  + " lock on its children");
+                        currentLockType + "lock containing an " + l.lockType  + " lock on its children");
             }
         }
 
@@ -277,6 +262,25 @@ public class LockContext {
     private boolean hasSIXAncestor(TransactionContext transaction) {
         // TODO(proj4_part2): implement
         return this.getEffectiveLockType(transaction).equals(LockType.SIX);
+    }
+
+
+    /**
+     * Helper method to get a list of all locks that
+     * are descendants of current context for the given transaction.
+     * @param transaction the given transaction
+     * @return a list of ResourceNames of descendants
+     */
+    private List<Lock> descendantLocks(TransactionContext transaction) {
+        ResourceName resourceName = getResourceName();
+        List<Lock> allTransLocks = lockman.getLocks(transaction);
+        List<Lock> allChildLocks = new ArrayList<>();
+        for (Lock l : allTransLocks) {
+            if (l.name.isDescendantOf(resourceName)) {
+                allChildLocks.add(l);
+            }
+        }
+        return allChildLocks;
     }
 
     /**
