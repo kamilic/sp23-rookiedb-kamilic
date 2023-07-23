@@ -121,6 +121,10 @@ public class LockManager {
             if (!updated) {
                 locks.add(lock);
             }
+
+            transactionLocks.putIfAbsent(lock.transactionNum, new ArrayList<>());
+            transactionLocks.get(lock.transactionNum).removeIf(l -> l.equals(lock));
+            transactionLocks.get(lock.transactionNum).add(lock);
         }
 
         /**
@@ -132,10 +136,12 @@ public class LockManager {
             for (int i = 0; i < locks.size(); i++) {
                 if (locks.get(i).equals(lock)) {
                     locks.remove(i);
+                    transactionLocks
+                            .getOrDefault(lock.transactionNum, new ArrayList<>())
+                            .removeIf(l -> l.equals(lock));
                     break;
                 }
             }
-
 
             processQueue();
         }
@@ -282,9 +288,6 @@ public class LockManager {
         long transNum = transaction.getTransNum();
         boolean isCompatible = res.checkCompatible(lockType, transNum);
         Lock lock = new Lock(name, lockType, transNum);
-        transactionLocks.putIfAbsent(transNum, new ArrayList<>());
-        transactionLocks.get(transNum).removeIf(l -> l.equals(lock));
-        transactionLocks.get(transNum).add(lock);
 
         if (!isCompatible) {
             LockRequest lq = new LockRequest(transaction, lock, res.getNotCompatibleLocks(lockType, transNum));
@@ -293,6 +296,7 @@ public class LockManager {
             return true;
         } else {
             res.grantOrUpdateLock(lock);
+
         }
 
         return false;
@@ -363,9 +367,6 @@ public class LockManager {
 
             if (res.isLockGranted(pendingReleaseLock)) {
                 res.releaseLock(pendingReleaseLock);
-                transactionLocks
-                        .getOrDefault(transNum, new ArrayList<>())
-                        .removeIf(l -> l.equals(pendingReleaseLock));
             }
         }
     }
