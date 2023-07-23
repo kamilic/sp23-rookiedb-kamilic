@@ -247,7 +247,10 @@ public class TestLockUtil {
                 "promote 0 database IX",
                 "promote 0 database/table1 IX",
                 "acquire 0 database/table1/3 X"
-        ), lockManager.log);
+        ).toString(), lockManager.log.toString());
+
+        System.out.println(lockManager.log);
+
         lockManager.clearLog();
 
         /**

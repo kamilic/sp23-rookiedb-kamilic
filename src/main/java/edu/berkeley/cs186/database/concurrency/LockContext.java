@@ -193,13 +193,14 @@ public class LockContext {
             );
         }
 
-        lockman.promote(transaction, resourceName, newLockType);
         if (newLockType.equals(LockType.SIX)) {
             List<ResourceName> sisNames = sisDescendants(transaction);
-            for (ResourceName sisName : sisNames) {
-                LockContext descendantCtx = LockContext.fromResourceName(lockman, sisName);
-                descendantCtx.release(transaction);
-            }
+            List<Lock> descendants = sisDescendantLocks(transaction);
+            sisNames.add(getResourceName());
+            lockman.acquireAndRelease(transaction, resourceName, newLockType, sisNames);
+            reduceDescendantLocksNum(descendants, transaction);
+        } else {
+            lockman.promote(transaction, resourceName, newLockType);
         }
     }
 
@@ -273,17 +274,18 @@ public class LockContext {
             // Why using `acquireAndRelease`?
             // The hints on the comment: You should only make *one* mutating call to the lock manager.
             lockman.acquireAndRelease(transaction, getResourceName(), targetLockType, resourceNames);
+            reduceDescendantLocksNum(descendantLocks, transaction);
+        }
+    }
 
-            for (Lock l : descendantLocks) {
-                LockContext lockContext = LockContext.fromResourceName(lockman, l.name);
-                LockContext parent = lockContext.parent;
-                if (parent != null) {
-                    parent.numChildLocks.put(transaction.getTransNum(), parent.getNumChildren(transaction) - 1);
-                }
+    private void reduceDescendantLocksNum(List<Lock> descendantLocks, TransactionContext transaction) {
+        for (Lock l : descendantLocks) {
+            LockContext lockContext = LockContext.fromResourceName(lockman, l.name);
+            LockContext parent = lockContext.parent;
+            if (parent != null) {
+                parent.numChildLocks.put(transaction.getTransNum(), parent.getNumChildren(transaction) - 1);
             }
         }
-
-
     }
 
     /**
@@ -359,6 +361,15 @@ public class LockContext {
         return allChildLocks;
     }
 
+    private List<Lock> sisDescendantLocks(TransactionContext transaction) {
+        List<Lock> descendants = descendantLocks(transaction);
+
+        return descendants
+                .stream()
+                .filter(l -> l.lockType.equals(LockType.S) || l.lockType.equals(LockType.IS))
+                .collect(Collectors.toList());
+    }
+
     /**
      * Helper method to get a list of resourceNames of all locks that are S or
      * IS and are descendants of current context for the given transaction.
@@ -369,11 +380,8 @@ public class LockContext {
      */
     private List<ResourceName> sisDescendants(TransactionContext transaction) {
         // TODO(proj4_part2): implement
-        List<Lock> descendants = descendantLocks(transaction);
-        return descendants
-                .stream()
-                .filter(l -> l.lockType.equals(LockType.S) || l.lockType.equals(LockType.IS))
-                .map(l -> l.name)
+        return sisDescendantLocks(transaction)
+                .stream().map(l -> l.name)
                 .collect(Collectors.toList());
     }
 
