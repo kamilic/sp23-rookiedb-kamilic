@@ -769,6 +769,68 @@ public class ARIESRecoveryManager implements RecoveryManager {
     void restartRedo() {
         // TODO(proj5): implement
         // find the lowest recLSN on dpt.
+        Optional<Long> recLSN = dirtyPageTable.values().stream().reduce(Math::min);
+        assert recLSN.isPresent();
+
+        Iterator<LogRecord> records = logManager.scanFrom(recLSN.get());
+
+        while (records.hasNext()) {
+            LogRecord rec = records.next();
+
+            if (!rec.isRedoable()) {
+                continue;
+            }
+
+            switch (rec.type) {
+                // a partition-related record (AllocPart, UndoAllocPart, FreePart, UndoFreePart)
+                case ALLOC_PART:
+                case FREE_PART:
+                case UNDO_ALLOC_PART:
+                case UNDO_FREE_PART:
+                // a record that allocates a page (AllocPage, UndoFreePage)
+                case ALLOC_PAGE:
+                case UNDO_FREE_PAGE: {
+                    rec.redo(this, diskSpaceManager, bufferManager);
+                } break;
+
+                // a record that modifies a page (UpdatePage, UndoUpdatePage, UndoAllocPage, FreePage)
+                case UPDATE_PAGE:
+                case UNDO_UPDATE_PAGE:
+                case UNDO_ALLOC_PAGE:
+                case FREE_PAGE: {
+                    // where all of the following hold:
+                    if (rec.getPageNum().isEmpty()) {
+                        break;
+                    }
+
+                    long recPage = rec.getPageNum().get();
+                    // the page is in the DPT
+                    if (!dirtyPageTable.containsKey(recPage)) {
+                        break;
+                    }
+
+                    // the record's LSN is greater than or equal to the DPT's recLSN for that page.
+                    long dptRecLSN = dirtyPageTable.get(recPage);
+                    if (rec.LSN < dptRecLSN) {
+                        break;
+                    }
+
+                    Page page = bufferManager.fetchPage(new DummyLockContext(), recPage);
+                    try {
+                        long pageLSN = page.getPageLSN();
+                        // the pageLSN on the page itself is strictly less than the LSN of the record.
+                        if (pageLSN >= rec.LSN) {
+                            break;
+                        }
+                    } finally {
+                        page.unpin();
+                    }
+                    rec.redo(this, diskSpaceManager, bufferManager);
+                } break;
+            }
+
+        }
+
         // get Iterator from lowest recLSN
 
 
