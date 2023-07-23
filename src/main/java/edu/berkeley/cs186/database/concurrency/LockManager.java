@@ -135,6 +135,7 @@ public class LockManager {
                 }
             }
 
+
             processQueue();
         }
 
@@ -356,6 +357,9 @@ public class LockManager {
 
             if (res.isLockGranted(pendingReleaseLock)) {
                 res.releaseLock(pendingReleaseLock);
+                transactionLocks
+                        .getOrDefault(transNum, new ArrayList<>())
+                        .removeIf(l -> l.equals(pendingReleaseLock));
             }
         }
     }
